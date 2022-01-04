@@ -22,8 +22,8 @@ import (
 
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 
-	"github.com/crossplane/crossplane-provider-ansible/internal/controller/config"
-	playbook "github.com/crossplane/crossplane-provider-ansible/internal/controller/playbookSet"
+	"github.com/crossplane/provider-ansible/internal/controller/config"
+	playbook "github.com/crossplane/provider-ansible/internal/controller/playbookSet"
 )
 
 // Setup creates all Template controllers with the supplied logger and adds them to

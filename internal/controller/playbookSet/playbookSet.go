@@ -35,8 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
-	"github.com/crossplane/crossplane-provider-ansible/apis/v1alpha1"
-	"github.com/crossplane/crossplane-provider-ansible/internal/ansible"
+	"github.com/crossplane/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane/provider-ansible/internal/ansible"
 	getter "github.com/hashicorp/go-getter"
 )
 

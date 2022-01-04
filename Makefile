@@ -1,6 +1,6 @@
 # ====================================================================================
 # Setup Project
-PROJECT_NAME := crossplane-provider-ansible
+PROJECT_NAME := provider-ansible
 PROJECT_REPO := github.com/crossplane/$(PROJECT_NAME)
 
 PLATFORMS ?= linux_amd64
@@ -75,9 +75,9 @@ dev: $(KIND) $(KUBECTL)
 	@$(KUBECTL) cluster-info --context kind-$(PROJECT_NAME)-dev
 	@$(INFO) Installing Crossplane CRDs
 	@$(KUBECTL) apply -k https://github.com/crossplane/crossplane//cluster?ref=master
-	@$(INFO) Installing Provider SQL CRDs
+	@$(INFO) Installing Provider Ansible CRDs
 	@$(KUBECTL) apply -R -f package/crds
-	@$(INFO) Starting Provider SQL controllers
+	@$(INFO) Starting Provider Ansible controllers
 	@$(GO) run cmd/provider/main.go --debug
 
 dev-clean: $(KIND) $(KUBECTL)

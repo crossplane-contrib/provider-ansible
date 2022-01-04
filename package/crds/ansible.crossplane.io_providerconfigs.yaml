@@ -27,7 +27,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: A ProviderConfig configures a Template provider.
+        description: A ProviderConfig configures an Asnible provider.
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation

@@ -54,7 +54,7 @@ const (
 )
 
 const (
-	playbookSetDir = "/playbooks"
+	playbookSetDir = "playbooks"
 	playbookYml    = "playbook.yml"
 )
 
@@ -66,11 +66,20 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
 		RateLimiter: ratelimiter.NewDefaultManagedRateLimiter(rl),
 	}
 
+	fs := afero.Afero{Fs: afero.NewOsFs()}
+
+	c := &connector{
+		kube:  mgr.GetClient(),
+		usage: resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
+		fs:    fs,
+		ansible: func(o ...ansible.PlaybookOption) *ansible.PbClient {
+			return ansible.NewAnsiblePlaybook(o)
+		},
+	}
+
 	r := managed.NewReconciler(mgr,
 		resource.ManagedKind(v1alpha1.PlaybookSetGroupVersionKind),
-		managed.WithExternalConnecter(&connector{
-			kube: mgr.GetClient(),
-		}),
+		managed.WithExternalConnecter(c),
 		managed.WithLogger(l.WithValues("controller", name)),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))))
 
@@ -84,10 +93,10 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
 // A connector is expected to produce an ExternalClient when its Connect method
 // is called.
 type connector struct {
-	kube  client.Client
-	usage resource.Tracker
-	fs    afero.Afero
-	l     logging.Logger
+	kube    client.Client
+	usage   resource.Tracker
+	fs      afero.Afero
+	ansible func(o ...ansible.PlaybookOption) *ansible.PbClient
 }
 
 func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.ExternalClient, error) { //nolint:gocyclo
@@ -175,19 +184,19 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	// NOTE(fahed): handle spec pc.Spec.Configuration
 
 	// Read playbooks filename from dir
-	pbList, err := ansible.ReadDir(dir, c.l)
+	pbList, err := ansible.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	apb := ansible.NewAnsiblePlaybook(ctx, ansible.WithPlaybooks(pbList))
+	pbClient := c.ansible(ansible.WithPlaybooks(pbList))
 
-	return &external{apb: apb, kube: c.kube}, nil
+	return &external{pbClient: pbClient, kube: c.kube}, nil
 }
 
 type external struct {
-	apb  *ansible.PbClient
-	kube client.Reader
+	pbClient *ansible.PbClient
+	kube     client.Reader
 }
 
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {

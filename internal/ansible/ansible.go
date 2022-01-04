@@ -17,10 +17,9 @@ limitations under the License.
 package ansible
 
 import (
-	"context"
+	"fmt"
 
 	"github.com/apenella/go-ansible/pkg/playbook"
-	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/spf13/afero"
 )
 
@@ -40,7 +39,7 @@ func WithPlaybooks(playbooks []string) PlaybookOption {
 }
 
 // NewAnsiblePlaybook returns a pbClient that will be used as ansible-playbook client
-func NewAnsiblePlaybook(ctx context.Context, o ...PlaybookOption) *PbClient {
+func NewAnsiblePlaybook(o []PlaybookOption) *PbClient {
 
 	pb := &playbook.AnsiblePlaybookCmd{
 		Playbooks: []string{},
@@ -54,7 +53,7 @@ func NewAnsiblePlaybook(ctx context.Context, o ...PlaybookOption) *PbClient {
 }
 
 // ReadDir read names of all files in folders
-func ReadDir(dir string, l logging.Logger) ([]string, error) {
+func ReadDir(dir string) ([]string, error) {
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 	file, err := fs.Open(dir)
 	if err != nil {
@@ -62,7 +61,7 @@ func ReadDir(dir string, l logging.Logger) ([]string, error) {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			l.Debug("Cannot close file", "error", err)
+			fmt.Println("cannot close file: %w", err)
 		}
 	}()
 

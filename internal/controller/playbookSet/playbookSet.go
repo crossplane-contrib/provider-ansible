@@ -22,11 +22,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/apenella/go-ansible/pkg/playbook"
 	"github.com/crossplane/crossplane-runtime/pkg/event"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
+	"github.com/crossplane/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane/provider-ansible/internal/ansible"
+	getter "github.com/hashicorp/go-getter"
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,10 +38,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-
-	"github.com/crossplane/provider-ansible/apis/v1alpha1"
-	"github.com/crossplane/provider-ansible/internal/ansible"
-	getter "github.com/hashicorp/go-getter"
 )
 
 const (
@@ -189,7 +189,12 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		return nil, err
 	}
 
-	pbClient := c.ansible(ansible.WithPlaybooks(pbList))
+	// Init pbClient with General configuration
+	pbClient := c.ansible(ansible.WithPlaybooks(pbList),
+		// `ansible-playbook` cmd output JSON Serialization
+		ansible.WithStdoutCallback("json"),
+		ansible.WithOptions(&playbook.AnsiblePlaybookOptions{}),
+	)
 
 	return &external{pbClient: pbClient, kube: c.kube}, nil
 }
@@ -200,28 +205,20 @@ type external struct {
 }
 
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
-	cr, ok := mg.(*v1alpha1.PlaybookSet)
-	if !ok {
-		return managed.ExternalObservation{}, errors.New(errNotPlaybookSet)
+
+	result, err := c.pbClient.ParseResultsWithMode(ctx, "check")
+	if err != nil {
+		return managed.ExternalObservation{}, err
 	}
 
-	// These fmt statements should be removed in the real implementation.
-	fmt.Printf("Observing: %+v", cr)
+	changes := ansible.Changes(ctx, result)
+
+	re := ansible.Exists(ctx, result)
 
 	return managed.ExternalObservation{
-		// Return false when the external resource does not exist. This lets
-		// the managed resource reconciler know that it needs to call Create to
-		// (re)create the resource, or that it has successfully been deleted.
-		ResourceExists: true,
-
-		// Return false when the external resource exists, but it not up to date
-		// with the desired managed resource state. This lets the managed
-		// resource reconciler know that it needs to call Update.
-		ResourceUpToDate: true,
-
-		// Return any details that may be required to connect to the external
-		// resource. These will be stored as the connection secret.
-		ConnectionDetails: managed.ConnectionDetails{},
+		ResourceExists:          re,
+		ResourceUpToDate:        !changes,
+		ResourceLateInitialized: false,
 	}, nil
 }
 

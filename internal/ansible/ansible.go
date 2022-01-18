@@ -35,7 +35,7 @@ type Parameters struct {
 // A PlaybookOption configures an AnsiblePlaybookCmd.
 type PlaybookOption func(*playbook.AnsiblePlaybookCmd)
 
-// PbCmd is a playbook client
+// PbCmd is a playbook cmd
 type PbCmd struct {
 	Playbook *playbook.AnsiblePlaybookCmd
 }

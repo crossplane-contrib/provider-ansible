@@ -1,4 +1,20 @@
-# crossplane-provider-ansible
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**  *generated with [DocToc](https://github.com/thlorenz/doctoc)*
+
+- [Crossplane Provider for Ansible](#crossplane-provider-for-ansible)
+  - [Overview](#overview)
+  - [Getting Started and Documentation](#getting-started-and-documentation)
+  - [Report a Bug](#report-a-bug)
+  - [Developer guide](#developer-guide)
+    - [Run against a Kubernetes cluster](#run-against-a-kubernetes-cluster)
+    - [Basic Usage](#basic-usage)
+  - [Additional documents](#additional-documents)
+  - [Licensing](#licensing)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+# Crossplane Provider for Ansible
 
 ## Overview
 
@@ -11,8 +27,8 @@ either fetched from a remote source (e.g. git), or simply specified inline.
 
 ## Getting Started and Documentation
 
-For getting started guides, installation, deployment, and administration, see
-our [Documentation](https://crossplane.io/docs/latest).
+For getting started guides, installation, deployment, and administration, check latest
+Crossplane [document](https://crossplane.io/docs/latest).
 
 ## Report a Bug
 
@@ -23,57 +39,55 @@ open an [issue](https://github.com/cloud-pak-gitops/crossplane-provider-ansible/
 
 `Ansible-provider` use [kind](https://github.com/kubernetes-sigs/kind) to run local Kubernetes clusters using Docker container "nodes".
 
-[Why kind ?](https://github.com/kubernetes-sigs/kind#why-kind)
-
-### Run against a Kubernetes cluster:
+### Run against a Kubernetes cluster
 
 If you have [go (1.16+)](https://golang.org/doc/devel/release.html#policy) and [docker](https://www.docker.com/) installed 
 
 ```console
-# make dev
+make dev
 ```
 is all you need!
 
 clean the dev environement:
 ```console
-# make dev-clean
+make dev-clean
 ```
 
 Build, push, and install:
 
 ```console
-# make all
+make all
 ```
 
 Build image:
 
 ```console
-# make image
+make image
 ```
 
 Push image:
 
 ```console
-# make push
+make push
 ```
 
 Compiling dna from source:
 
 ```console
-# make build
+make build
 ```
 
-#### Basic usage
+### Basic Usage
 
 To list crds:
 ```console
-# kubectl get crds
+kubectl get crds
 ```
 
-## Additional documents:
+## Additional documents
 
-- [`GO`](https://tecadmin.net/install-go-on-debian/):       install go1.17+ on debian
-- [`DOCKER`](https://docs.docker.com/engine/install/debian/):   install docker on debian
+- [`GO`](https://tecadmin.net/install-go-on-debian/): install go1.17+ on debian
+- [`DOCKER`](https://docs.docker.com/engine/install/debian/): install docker on debian
 
 ## Licensing
 

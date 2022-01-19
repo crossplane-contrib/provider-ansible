@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package playbook
+package playbookset
 
 import (
 	"context"
@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/apenella/go-ansible/pkg/playbook"
 	"github.com/crossplane/crossplane-runtime/pkg/event"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
@@ -50,6 +49,7 @@ const (
 	errRemoteConfiguration = "cannot get remote PlaybookSet configuration "
 	errWritePlaybookSet    = "cannot write PlaybookSet configuration in" + playbookYml
 	errMkdir               = "cannot make Playbook directory"
+	errInit                = "cannot initialize Ansible client"
 	gitCredentialsFilename = ".git-credentials"
 )
 
@@ -57,6 +57,10 @@ const (
 	playbookSetDir = "playbooks"
 	playbookYml    = "playbook.yml"
 )
+
+type params interface {
+	Init(ctx context.Context) (*ansible.PbCmd, error)
+}
 
 // Setup adds a controller that reconciles PlaybookSet managed resources.
 func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
@@ -72,8 +76,8 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
 		kube:  mgr.GetClient(),
 		usage: resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
 		fs:    fs,
-		ansible: func(o ...ansible.PlaybookOption) *ansible.PbClient {
-			return ansible.NewAnsiblePlaybook(o)
+		ansible: func(dir string) params {
+			return ansible.Parameters{Dir: dir}
 		},
 	}
 
@@ -96,7 +100,7 @@ type connector struct {
 	kube    client.Client
 	usage   resource.Tracker
 	fs      afero.Afero
-	ansible func(o ...ansible.PlaybookOption) *ansible.PbClient
+	ansible func(dir string) params
 }
 
 func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.ExternalClient, error) { //nolint:gocyclo
@@ -183,30 +187,24 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 	// NOTE(fahed): handle spec pc.Spec.Configuration
 
-	// Read playbooks filename from dir
-	pbList, err := ansible.ReadDir(dir)
+	ps := c.ansible(playbookSetDir)
+
+	pbCmd, err := ps.Init(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, errInit)
 	}
 
-	// Init pbClient with General configuration
-	pbClient := c.ansible(ansible.WithPlaybooks(pbList),
-		// `ansible-playbook` cmd output JSON Serialization
-		ansible.WithStdoutCallback("json"),
-		ansible.WithOptions(&playbook.AnsiblePlaybookOptions{}),
-	)
-
-	return &external{pbClient: pbClient, kube: c.kube}, nil
+	return &external{pbCmd: pbCmd, kube: c.kube}, nil
 }
 
 type external struct {
-	pbClient *ansible.PbClient
-	kube     client.Reader
+	pbCmd *ansible.PbCmd
+	kube  client.Reader
 }
 
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
 
-	result, err := c.pbClient.ParseResultsWithMode(ctx, "check")
+	result, err := c.pbCmd.ParseResultsWithMode(ctx, "check")
 	if err != nil {
 		return managed.ExternalObservation{}, err
 	}

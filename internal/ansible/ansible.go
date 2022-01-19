@@ -26,11 +26,17 @@ import (
 	"github.com/spf13/afero"
 )
 
+// Parameters are minimal needed Parameters to initializes ansible-playbook command
+type Parameters struct {
+	// Dir in which to execute the ansible-playbook binary.
+	Dir string
+}
+
 // A PlaybookOption configures an AnsiblePlaybookCmd.
 type PlaybookOption func(*playbook.AnsiblePlaybookCmd)
 
-// PbClient is a playbook client
-type PbClient struct {
+// PbCmd is a playbook cmd
+type PbCmd struct {
 	Playbook *playbook.AnsiblePlaybookCmd
 }
 
@@ -55,8 +61,21 @@ func WithOptions(options *playbook.AnsiblePlaybookOptions) PlaybookOption {
 	}
 }
 
-// NewAnsiblePlaybook returns a pbClient that will be used as ansible-playbook client
-func NewAnsiblePlaybook(o []PlaybookOption) *PbClient {
+// Init initializes pbCmd from parameters
+func (p Parameters) Init(ctx context.Context) (*PbCmd, error) {
+	// Read playbooks filename from dir
+	pbList, err := readDir(p.Dir)
+	if err != nil {
+		return nil, err
+	}
+	return NewAnsiblePlaybook(WithPlaybooks(pbList),
+		// `ansible-playbook` cmd output JSON Serialization
+		WithStdoutCallback("json"),
+		WithOptions(&playbook.AnsiblePlaybookOptions{})), nil
+}
+
+// NewAnsiblePlaybook returns a pbCmd that will be used as ansible-playbook client
+func NewAnsiblePlaybook(o ...PlaybookOption) *PbCmd {
 
 	pb := &playbook.AnsiblePlaybookCmd{
 		Playbooks: []string{},
@@ -66,11 +85,11 @@ func NewAnsiblePlaybook(o []PlaybookOption) *PbClient {
 		fn(pb)
 	}
 
-	return &PbClient{Playbook: pb}
+	return &PbCmd{Playbook: pb}
 }
 
-// ReadDir read names of all files in folders
-func ReadDir(dir string) ([]string, error) {
+// readDir read names of all files in folders
+func readDir(dir string) ([]string, error) {
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 	file, err := fs.Open(dir)
 	if err != nil {
@@ -126,19 +145,19 @@ func Exists(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool {
 }
 
 // ParseResultsWithMode play `ansible-playbook` then parse JSON stream results with selected mode
-func (pbClient *PbClient) ParseResultsWithMode(ctx context.Context, mode string) (*results.AnsiblePlaybookJSONResults, error) {
+func (pbCmd *PbCmd) ParseResultsWithMode(ctx context.Context, mode string) (*results.AnsiblePlaybookJSONResults, error) {
 
 	switch mode {
 	case "check":
 		// Enable the check flag
 		// Check don't make any changes; instead, try to predict some of the changes that may occur
-		pbClient.Playbook.Options.Check = true
+		pbCmd.Playbook.Options.Check = true
 	default:
 	}
 
-	go func(ctx context.Context, pbClient *PbClient) {
-		_ = pbClient.Playbook.Run(ctx)
-	}(ctx, pbClient)
+	go func(ctx context.Context, pbCmd *PbCmd) {
+		_ = pbCmd.Playbook.Run(ctx)
+	}(ctx, pbCmd)
 
 	res, err := results.ParseJSONResultsStream(os.Stdout)
 	if err != nil {

@@ -204,12 +204,12 @@ type external struct {
 
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
 
-	result, err := c.pbCmd.ParseResultsWithMode(ctx, "check")
+	changes, err := c.pbCmd.ParseResultsWithMode(ctx, "check")
 	if err != nil {
 		return managed.ExternalObservation{}, err
 	}
 
-	changes := ansible.Changes(ctx, result)
+	//changes := pbCmd.Changes(ctx)
 
 	re := ansible.Exists(ctx, result)
 
@@ -225,6 +225,8 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 	if !ok {
 		return managed.ExternalCreation{}, errors.New(errNotPlaybookSet)
 	}
+
+    result, err := c.pbCmd.Create(ctx, "check")
 
 	fmt.Printf("Creating: %+v", cr)
 

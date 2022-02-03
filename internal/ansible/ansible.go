@@ -37,7 +37,7 @@ type PlaybookOption func(*playbook.AnsiblePlaybookCmd)
 
 // PbCmd is a playbook cmd
 type PbCmd struct {
-	Playbook *playbook.AnsiblePlaybookCmd
+	PlaybookCmd *playbook.AnsiblePlaybookCmd
 }
 
 // WithPlaybooks initializes Playbooks list.
@@ -88,6 +88,9 @@ func NewAnsiblePlaybook(o ...PlaybookOption) *PbCmd {
 	return &PbCmd{Playbook: pb}
 }
 
+func Create(){
+
+}
 // readDir read names of all files in folders
 func readDir(dir string) ([]string, error) {
 	fs := afero.Afero{Fs: afero.NewOsFs()}
@@ -109,15 +112,15 @@ func readDir(dir string) ([]string, error) {
 	return files, nil
 }
 
-// Changes parse 'ansible-playbook --check' results to determine whether there is a diff between
+// findChanges parse 'ansible-playbook --check' results to determine whether there is a diff between
 // the desired and the actual state of the configuration. It returns true if
 // there is a diff.
 // TODO we should handle EXTRA_VARS as we invoke the Diff func
-func Changes(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool {
+func (p *PbCmd) findChanges(ctx context.Context) bool {
 
 	var changes bool
 	// check changes for all hosts
-	for _, stats := range res.Stats {
+	for _, stats := range p.res.Stats {
 		if stats.Changed != 0 {
 			changes = true
 			break
@@ -127,8 +130,8 @@ func Changes(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool 
 	return changes
 }
 
-// Exists must be true if a corresponding external resource exists
-func Exists(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool {
+// exists must be true if a corresponding external resource exists
+func exists(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool {
 
 	var resourcesExists bool
 	// check changes for all hosts
@@ -145,7 +148,7 @@ func Exists(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool {
 }
 
 // ParseResultsWithMode play `ansible-playbook` then parse JSON stream results with selected mode
-func (pbCmd *PbCmd) ParseResultsWithMode(ctx context.Context, mode string) (*results.AnsiblePlaybookJSONResults, error) {
+func (pbCmd *PbCmd) Apply(ctx context.Context, mode string) (bool, error) {
 
 	switch mode {
 	case "check":
@@ -164,6 +167,7 @@ func (pbCmd *PbCmd) ParseResultsWithMode(ctx context.Context, mode string) (*res
 		return nil, err
 	}
 
-	return res, nil
+	c := findChanges(res)
+	return c, nil
 
 }

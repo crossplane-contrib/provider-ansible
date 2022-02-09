@@ -23,6 +23,7 @@ import (
 
 	"github.com/apenella/go-ansible/pkg/playbook"
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
+	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/spf13/afero"
 )
 
@@ -113,7 +114,7 @@ func readDir(dir string) ([]string, error) {
 // the desired and the actual state of the configuration. It returns true if
 // there is a diff.
 // TODO we should handle EXTRA_VARS as we invoke the Diff func
-func Changes(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool {
+func diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
 
 	var changes bool
 	// check changes for all hosts
@@ -124,12 +125,11 @@ func Changes(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool 
 		}
 	}
 
-	return changes
+	return changes, exists(res)
 }
 
 // Exists must be true if a corresponding external resource exists
-func Exists(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool {
-
+func exists(res *results.AnsiblePlaybookJSONResults) bool {
 	var resourcesExists bool
 	// check changes for all hosts
 	for _, stats := range res.Stats {
@@ -140,30 +140,34 @@ func Exists(ctx context.Context, res *results.AnsiblePlaybookJSONResults) bool {
 			break
 		}
 	}
-
 	return resourcesExists
 }
 
-// ParseResultsWithMode play `ansible-playbook` then parse JSON stream results with selected mode
-func (pbCmd *PbCmd) ParseResultsWithMode(ctx context.Context, mode string) (*results.AnsiblePlaybookJSONResults, error) {
-
-	switch mode {
-	case "check":
-		// Enable the check flag
-		// Check don't make any changes; instead, try to predict some of the changes that may occur
-		pbCmd.Playbook.Options.Check = true
-	default:
+// ParseResults play `ansible-playbook` then parse JSON stream results with check mode
+func (pbCmd *PbCmd) ParseResults(ctx context.Context, mg resource.Managed) (bool, bool, error) {
+	// Enable the check flag
+	// Check don't make any changes; instead, try to predict some of the changes that may occur
+	pbCmd.Playbook.Options.Check = true
+	result, err := runAndParsePlaybook(ctx, pbCmd)
+	if err != nil {
+		return false, false, err
 	}
+	changes, re := diff(result)
+	return changes, re, nil
+}
 
+// CreateOrUpdate run playbook during  update or create
+func (pbCmd *PbCmd) CreateOrUpdate(ctx context.Context, mg resource.Managed) error {
+	err := pbCmd.Playbook.Run(ctx)
+	return err
+}
+
+// run playbook and parse result
+func runAndParsePlaybook(ctx context.Context, pbCmd *PbCmd) (*results.AnsiblePlaybookJSONResults, error) {
 	go func(ctx context.Context, pbCmd *PbCmd) {
 		_ = pbCmd.Playbook.Run(ctx)
 	}(ctx, pbCmd)
 
 	res, err := results.ParseJSONResultsStream(os.Stdout)
-	if err != nil {
-		return nil, err
-	}
-
-	return res, nil
-
+	return res, err
 }

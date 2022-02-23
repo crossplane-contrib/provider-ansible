@@ -75,7 +75,7 @@ func TestConnect(t *testing.T) {
 		kube    client.Client
 		usage   resource.Tracker
 		fs      afero.Afero
-		ansible func(dir string) params
+		ansible func(ansiblePlayblook AnsiblePlayblook) params
 	}
 
 	type args struct {
@@ -290,7 +290,7 @@ func TestConnect(t *testing.T) {
 				},
 				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string) params {
+				ansible: func(_ AnsiblePlayblook) params {
 					return MockPs{
 						MockInit: func(ctx context.Context) (*ansible.PbCmd, error) { return nil, errBoom },
 					}
@@ -316,7 +316,7 @@ func TestConnect(t *testing.T) {
 				},
 				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string) params {
+				ansible: func(_ AnsiblePlayblook) params {
 					return MockPs{
 						MockInit: func(ctx context.Context) (*ansible.PbCmd, error) { return nil, nil },
 					}

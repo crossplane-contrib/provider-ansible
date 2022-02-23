@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/apenella/go-ansible/pkg/playbook"
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
@@ -29,7 +30,8 @@ import (
 // Parameters are minimal needed Parameters to initializes ansible-playbook command
 type Parameters struct {
 	// Dir in which to execute the ansible-playbook binary.
-	Dir string
+	Dir          string
+	Exludedfiles []string
 }
 
 // A PlaybookOption configures an AnsiblePlaybookCmd.
@@ -64,7 +66,7 @@ func WithOptions(options *playbook.AnsiblePlaybookOptions) PlaybookOption {
 // Init initializes pbCmd from parameters
 func (p Parameters) Init(ctx context.Context) (*PbCmd, error) {
 	// Read playbooks filename from dir
-	pbList, err := readDir(p.Dir)
+	pbList, err := readDir(p.Dir, p.Exludedfiles)
 	if err != nil {
 		return nil, err
 	}
@@ -88,8 +90,18 @@ func NewAnsiblePlaybook(o ...PlaybookOption) *PbCmd {
 	return &PbCmd{Playbook: pb}
 }
 
+// contains string in an array
+func contains(a string, list []string) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
+}
+
 // readDir read names of all files in folders
-func readDir(dir string) ([]string, error) {
+func readDir(dir string, exludedFiles []string) ([]string, error) {
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 	file, err := fs.Open(dir)
 	if err != nil {
@@ -101,12 +113,21 @@ func readDir(dir string) ([]string, error) {
 		}
 	}()
 
-	files, err := file.Readdirnames(0)
-	if err != nil {
-		return nil, err
-	}
+	var filePaths []string
+	filepath.Walk(file.Name(), func(path string, f os.FileInfo, err error) error {
+		if f.IsDir() && f.Name() == ".git" {
+			return filepath.SkipDir
+		}
 
-	return files, nil
+		if contains(path, exludedFiles) {
+			return nil
+		}
+		if !f.IsDir() {
+			filePaths = append(filePaths, path)
+		}
+		return nil
+	})
+	return filePaths, nil
 }
 
 // Changes parse 'ansible-playbook --check' results to determine whether there is a diff between

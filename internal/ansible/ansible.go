@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/apenella/go-ansible/pkg/options"
 	"github.com/apenella/go-ansible/pkg/playbook"
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
 	"github.com/spf13/afero"
@@ -56,6 +57,13 @@ func WithStdoutCallback(stdoutCallback string) PlaybookOption {
 	}
 }
 
+// wihConnectionOptions defines the ansible's playbook connection options.
+func WihConnectionOptions(options *options.AnsibleConnectionOptions) PlaybookOption {
+	return func(ap *playbook.AnsiblePlaybookCmd) {
+		ap.ConnectionOptions = options
+	}
+}
+
 // WithOptions defines the ansible's playbook options.
 func WithOptions(options *playbook.AnsiblePlaybookOptions) PlaybookOption {
 	return func(ap *playbook.AnsiblePlaybookCmd) {
@@ -65,6 +73,14 @@ func WithOptions(options *playbook.AnsiblePlaybookOptions) PlaybookOption {
 
 // Init initializes pbCmd from parameters
 func (p Parameters) Init(ctx context.Context) (*PbCmd, error) {
+	// manage dependencies
+	fs := afero.Afero{Fs: afero.NewOsFs()}
+	ansibleDir := filepath.Clean(filepath.Join("/.ansible", p.Dir))
+
+	if err := fs.MkdirAll(ansibleDir, 0700); err != nil {
+		fmt.Errorf("impossible to create dir: %s", err.Error())
+	}
+
 	// Read playbooks filename from dir
 	pbList, err := readDir(p.Dir, p.Exludedfiles)
 	if err != nil {
@@ -73,7 +89,8 @@ func (p Parameters) Init(ctx context.Context) (*PbCmd, error) {
 	return NewAnsiblePlaybook(WithPlaybooks(pbList),
 		// `ansible-playbook` cmd output JSON Serialization
 		WithStdoutCallback("json"),
-		WithOptions(&playbook.AnsiblePlaybookOptions{})), nil
+		WihConnectionOptions(&options.AnsibleConnectionOptions{Connection: "local"}),
+		WithOptions(&playbook.AnsiblePlaybookOptions{Inventory: "127.0.0.1,"})), nil
 }
 
 // NewAnsiblePlaybook returns a pbCmd that will be used as ansible-playbook client

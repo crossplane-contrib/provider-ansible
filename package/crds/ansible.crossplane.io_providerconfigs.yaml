@@ -44,6 +44,12 @@ spec:
           spec:
             description: A ProviderConfigSpec defines the desired state of a ProviderConfig.
             properties:
+              configuration:
+                description: Configuration that should be injected  dependencies to
+                  run playbook this provider config, expressed as inline HCL. This
+                  can be used to automatically fetch ansible roles  configuration
+                  blocks.
+                type: string
               credentials:
                 description: Credentials required to authenticate to this provider.
                 items:

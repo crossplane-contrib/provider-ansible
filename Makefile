@@ -71,7 +71,7 @@ run: go.build
 
 dev: $(KIND) $(KUBECTL)
 	@$(INFO) Creating kind cluster
-	@$(KIND) create cluster --name=$(PROJECT_NAME)-dev
+	@$(KIND) create cluster --name=$(PROJECT_NAME)-dev | true
 	@$(KUBECTL) cluster-info --context kind-$(PROJECT_NAME)-dev
 	@$(INFO) Installing Crossplane CRDs
 	@$(KUBECTL) apply -k https://github.com/crossplane/crossplane//cluster?ref=master

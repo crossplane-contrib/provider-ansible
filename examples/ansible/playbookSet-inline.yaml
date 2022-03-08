@@ -9,15 +9,11 @@ spec:
     # playbook.yaml as opaque, inline yaml.
     source: Inline
     module: |
-      - name: create a bucket
-        hosts: localhost
+      ---
+      - hosts: localhost
         tasks:
-          - name: Storage bucket
-            google.cloud.gcp_storage_bucket:
-              name: ansible-storage-module
-              project: project-id
-              auth_kind: serviceaccount
-              service_account_file: "gcp-credentials.json"
-              state: present
+          - name: ansibleplaybook-simple
+            debug:
+              msg: Your are running 'ansibleplaybook-simple' example
   providerConfigRef:
     name: default

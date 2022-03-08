@@ -244,8 +244,8 @@ func TestConnect(t *testing.T) {
 							ProviderConfigReference: &xpv1.Reference{},
 						},
 						ForProvider: v1alpha1.PlaybookSetParameters{
-							Configuration: "github.com/crossplane/rocks",
-							Source:        v1alpha1.ConfigurationSourceRemote,
+							Module: "github.com/crossplane/rocks",
+							Source: v1alpha1.ConfigurationSourceRemote,
 						},
 					},
 				},
@@ -274,8 +274,8 @@ func TestConnect(t *testing.T) {
 							ProviderConfigReference: &xpv1.Reference{},
 						},
 						ForProvider: v1alpha1.PlaybookSetParameters{
-							Configuration: "I'm Yaml!",
-							Source:        v1alpha1.ConfigurationSourceInline,
+							Module: "I'm Yaml!",
+							Source: v1alpha1.ConfigurationSourceInline,
 						},
 					},
 				},

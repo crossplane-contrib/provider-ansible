@@ -40,7 +40,7 @@ type PlaybookSetParameters struct {
 	// TODO support other remotes https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html
 	// When the playbookSet's source is 'Inline' the
 	// content of a simple playbook.yml file may be written inline.
-	Configuration string `json:"module"`
+	Module string `json:"module"`
 
 	// Source of configuration of this playbookSet.
 	Source ConfigurationSource `json:"source"`

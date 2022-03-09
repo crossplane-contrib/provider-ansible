@@ -76,8 +76,11 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
 		kube:  mgr.GetClient(),
 		usage: resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
 		fs:    fs,
-		ansible: func(dir string) params {
-			return ansible.Parameters{Dir: dir}
+		ansible: func(ansiblePlayblook AnsiblePlayblook) params {
+			return ansible.Parameters{
+				Dir:          ansiblePlayblook.dir,
+				Exludedfiles: ansiblePlayblook.exludedfiles,
+			}
 		},
 	}
 
@@ -94,13 +97,19 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
 		Complete(r)
 }
 
+type AnsiblePlayblook struct {
+	dir          string
+	exludedfiles []string
+	dependencies string
+}
+
 // A connector is expected to produce an ExternalClient when its Connect method
 // is called.
 type connector struct {
 	kube    client.Client
 	usage   resource.Tracker
 	fs      afero.Afero
-	ansible func(dir string) params
+	ansible func(ansiblePlayblook AnsiblePlayblook) params
 }
 
 func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.ExternalClient, error) { //nolint:gocyclo
@@ -157,10 +166,9 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		}
 
 		client := getter.Client{
-			Src: cr.Spec.ForProvider.Configuration,
-			Dst: dir,
-			Pwd: dir,
-
+			Src:  cr.Spec.ForProvider.Module,
+			Dst:  dir,
+			Pwd:  dir,
 			Mode: getter.ClientModeDir,
 		}
 		err := client.Get()
@@ -168,10 +176,12 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			return nil, errors.Wrap(err, errRemoteConfiguration)
 		}
 	case v1alpha1.ConfigurationSourceInline:
-		if err := c.fs.WriteFile(filepath.Join(dir, playbookYml), []byte(cr.Spec.ForProvider.Configuration), 0600); err != nil {
+		if err := c.fs.WriteFile(filepath.Join(dir, playbookYml), []byte(cr.Spec.ForProvider.Module), 0600); err != nil {
 			return nil, errors.Wrap(err, errWritePlaybookSet)
 		}
 	}
+
+	ansiblePlayblook := AnsiblePlayblook{dir: playbookSetDir}
 
 	// Saved credentials needed for ansible playbooks execution
 	for _, cd := range pc.Spec.Credentials {
@@ -183,11 +193,12 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		if err := c.fs.WriteFile(p, data, 0600); err != nil {
 			return nil, errors.Wrap(err, errWriteCreds)
 		}
+		ansiblePlayblook.exludedfiles = append(ansiblePlayblook.exludedfiles, p)
 	}
 
 	// NOTE(fahed): handle spec pc.Spec.Configuration
 
-	ps := c.ansible(playbookSetDir)
+	ps := c.ansible(ansiblePlayblook)
 
 	pbCmd, err := ps.Init(ctx)
 	if err != nil {

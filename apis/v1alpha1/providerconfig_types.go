@@ -27,9 +27,9 @@ type ProviderConfigSpec struct {
 	// Credentials required to authenticate to this provider.
 	Credentials []ProviderCredentials `json:"credentials"`
 
-	// Configuration that should be injected  dependencies to run playbook
-	// this provider config, expressed as inline HCL. This can be used to
-	// automatically fetch ansible roles  configuration blocks.
+	// Configuration manage the necessary dependencies to run playbook
+	// it is expressed as inline yaml. This can be used to
+	// automatically fetch ansible roles dependencies.
 	// +optional
 	Configuration *string `json:"configuration,omitempty"`
 }

@@ -76,10 +76,10 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
 		kube:  mgr.GetClient(),
 		usage: resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
 		fs:    fs,
-		ansible: func(ansiblePlayblook AnsiblePlayblook) params {
+		ansible: func(dir string, excludedFiles []string) params {
 			return ansible.Parameters{
-				Dir:          ansiblePlayblook.dir,
-				Exludedfiles: ansiblePlayblook.exludedfiles,
+				Dir:           dir,
+				ExcludedFiles: excludedFiles,
 			}
 		},
 	}
@@ -97,19 +97,13 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
 		Complete(r)
 }
 
-type AnsiblePlayblook struct {
-	dir          string
-	exludedfiles []string
-	dependencies string
-}
-
 // A connector is expected to produce an ExternalClient when its Connect method
 // is called.
 type connector struct {
 	kube    client.Client
 	usage   resource.Tracker
 	fs      afero.Afero
-	ansible func(ansiblePlayblook AnsiblePlayblook) params
+	ansible func(dir string, excludedFiles []string) params
 }
 
 func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.ExternalClient, error) { //nolint:gocyclo
@@ -121,6 +115,8 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	if !ok {
 		return nil, errors.New(errNotPlaybookSet)
 	}
+
+	excludedFilesPath := []string{}
 
 	// NOTE(negz): This directory will be garbage collected by the workdir
 	// garbage collector that is started in Setup.
@@ -157,6 +153,8 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			if err := c.fs.WriteFile(p, data, 0600); err != nil {
 				return nil, errors.Wrap(err, errWriteGitCreds)
 			}
+			excludedFilesPath = append(excludedFilesPath, p)
+
 			// NOTE(ytsarev): Make go-getter pick up .git-credentials, see /.gitconfig in the container image
 			// TODO: check wether go-getter is used in the ansible case
 			err = os.Setenv("GIT_CRED_DIR", gitCredDir)
@@ -181,8 +179,6 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		}
 	}
 
-	ansiblePlayblook := AnsiblePlayblook{dir: playbookSetDir}
-
 	// Saved credentials needed for ansible playbooks execution
 	for _, cd := range pc.Spec.Credentials {
 		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
@@ -193,12 +189,11 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		if err := c.fs.WriteFile(p, data, 0600); err != nil {
 			return nil, errors.Wrap(err, errWriteCreds)
 		}
-		ansiblePlayblook.exludedfiles = append(ansiblePlayblook.exludedfiles, p)
+		excludedFilesPath = append(excludedFilesPath, p)
 	}
 
 	// NOTE(fahed): handle spec pc.Spec.Configuration
-
-	ps := c.ansible(ansiblePlayblook)
+	ps := c.ansible(dir, excludedFilesPath)
 
 	pbCmd, err := ps.Init(ctx)
 	if err != nil {

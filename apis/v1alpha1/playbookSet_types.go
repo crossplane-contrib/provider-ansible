@@ -44,9 +44,6 @@ type PlaybookSetParameters struct {
 
 	// Source of configuration of this playbookSet.
 	Source ConfigurationSource `json:"source"`
-
-	// Dependencies intialise ansible playbook
-	Dependencies string `json:"dependencies`
 }
 
 // PlaybookSetObservation are the observable fields of a PlaybookSet.

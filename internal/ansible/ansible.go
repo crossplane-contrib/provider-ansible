@@ -32,8 +32,10 @@ import (
 // Parameters are minimal needed Parameters to initializes ansible-playbook command
 type Parameters struct {
 	// Dir in which to execute the ansible-playbook binary.
-	Dir          string
-	Exludedfiles []string
+	Dir string
+
+	// File to be ignored when executing the ansible-playbook binary.
+	ExcludedFiles []string
 }
 
 // A PlaybookOption configures an AnsiblePlaybookCmd.
@@ -58,8 +60,8 @@ func WithStdoutCallback(stdoutCallback string) PlaybookOption {
 	}
 }
 
-// wihConnectionOptions defines the ansible's playbook connection options.
-func WihConnectionOptions(options *options.AnsibleConnectionOptions) PlaybookOption {
+// WithConnectionOptions defines the ansible's playbook connection options.
+func WithConnectionOptions(options *options.AnsibleConnectionOptions) PlaybookOption {
 	return func(ap *playbook.AnsiblePlaybookCmd) {
 		ap.ConnectionOptions = options
 	}
@@ -74,24 +76,19 @@ func WithOptions(options *playbook.AnsiblePlaybookOptions) PlaybookOption {
 
 // Init initializes pbCmd from parameters
 func (p Parameters) Init(ctx context.Context) (*PbCmd, error) {
-	// manage dependencies
-	fs := afero.Afero{Fs: afero.NewOsFs()}
-	ansibleDir := filepath.Clean(filepath.Join("/.ansible", p.Dir))
-
-	if err := fs.MkdirAll(ansibleDir, 0700); err != nil {
-		fmt.Errorf("impossible to create dir: %s", err.Error())
-	}
 
 	// Read playbooks filename from dir
-	pbList, err := readDir(p.Dir, p.Exludedfiles)
+	pbList, err := readDir(p.Dir, p.ExcludedFiles)
 	if err != nil {
 		return nil, err
 	}
 	return NewAnsiblePlaybook(WithPlaybooks(pbList),
 		// `ansible-playbook` cmd output JSON Serialization
 		WithStdoutCallback("json"),
-		WihConnectionOptions(&options.AnsibleConnectionOptions{Connection: "local"}),
-		WithOptions(&playbook.AnsiblePlaybookOptions{Inventory: "127.0.0.1,"})), nil
+		// e.g options.AnsibleConnectionOptions{Connection: "local"}
+		WithConnectionOptions(&options.AnsibleConnectionOptions{}),
+		// e.g playbook.AnsiblePlaybookOptions{Inventory: "127.0.0.1,"}
+		WithOptions(&playbook.AnsiblePlaybookOptions{})), nil
 }
 
 // NewAnsiblePlaybook returns a pbCmd that will be used as ansible-playbook client
@@ -118,33 +115,28 @@ func contains(a string, list []string) bool {
 	return false
 }
 
-// readDir read names of all files in folders
-func readDir(dir string, exludedFiles []string) ([]string, error) {
+// readDir reads names of all files in playbookSet UID folder with the exclusion of excludedFiles
+func readDir(dir string, excludedFiles []string) ([]string, error) {
 	fs := afero.Afero{Fs: afero.NewOsFs()}
-	file, err := fs.Open(dir)
+	playbookSetUIDdir, err := fs.Open(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		if err := file.Close(); err != nil {
+		if err := playbookSetUIDdir.Close(); err != nil {
 			fmt.Println("cannot close file: %w", err)
 		}
 	}()
 
 	var filePaths []string
-	filepath.Walk(file.Name(), func(path string, f os.FileInfo, err error) error {
-		if f.IsDir() && f.Name() == ".git" {
-			return filepath.SkipDir
-		}
-
-		if contains(path, exludedFiles) {
-			return nil
-		}
-		if !f.IsDir() {
+	if err := filepath.Walk(playbookSetUIDdir.Name(), func(path string, f os.FileInfo, err error) error {
+		if !contains(path, excludedFiles) && !f.IsDir() {
 			filePaths = append(filePaths, path)
 		}
 		return nil
-	})
+	}); err != nil {
+		return nil, err
+	}
 	return filePaths, nil
 }
 

@@ -214,16 +214,11 @@ type external struct {
 }
 
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
+	re, changes, err := c.pbCmd.ParseResults(ctx, mg)
 
-	result, err := c.pbCmd.ParseResultsWithMode(ctx, "check")
 	if err != nil {
 		return managed.ExternalObservation{}, err
 	}
-
-	changes := ansible.Changes(ctx, result)
-
-	re := ansible.Exists(ctx, result)
-
 	return managed.ExternalObservation{
 		ResourceExists:          re,
 		ResourceUpToDate:        !changes,
@@ -232,12 +227,12 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 }
 
 func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.ExternalCreation, error) {
-	cr, ok := mg.(*v1alpha1.PlaybookSet)
-	if !ok {
-		return managed.ExternalCreation{}, errors.New(errNotPlaybookSet)
-	}
 
-	fmt.Printf("Creating: %+v", cr)
+	// TODO see ConnectionDetails
+	err := c.pbCmd.CreateOrUpdate(ctx, mg)
+	if err != nil {
+		return managed.ExternalCreation{}, err
+	}
 
 	return managed.ExternalCreation{
 		// Optionally return any details that may be required to connect to the
@@ -247,13 +242,11 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 }
 
 func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.ExternalUpdate, error) {
-	cr, ok := mg.(*v1alpha1.PlaybookSet)
-	if !ok {
-		return managed.ExternalUpdate{}, errors.New(errNotPlaybookSet)
+
+	err := c.pbCmd.CreateOrUpdate(ctx, mg)
+	if err != nil {
+		return managed.ExternalUpdate{}, err
 	}
-
-	fmt.Printf("Updating: %+v", cr)
-
 	return managed.ExternalUpdate{
 		// Optionally return any details that may be required to connect to the
 		// external resource. These will be stored as the connection secret.

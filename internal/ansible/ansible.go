@@ -29,6 +29,10 @@ import (
 	"github.com/spf13/afero"
 )
 
+var (
+	playbookPatterns = []string{"*.yaml", "*.yml"}
+)
+
 // Parameters are minimal needed Parameters to initializes ansible-playbook command
 type Parameters struct {
 	// Dir in which to execute the ansible-playbook binary.
@@ -78,7 +82,7 @@ func WithOptions(options *playbook.AnsiblePlaybookOptions) PlaybookOption {
 func (p Parameters) Init(ctx context.Context) (*PbCmd, error) {
 
 	// Read playbooks filename from dir
-	pbList, err := readDir(p.Dir, p.ExcludedFiles)
+	pbList, err := readDir(p.Dir, playbookPatterns)
 	if err != nil {
 		return nil, err
 	}
@@ -105,18 +109,8 @@ func NewAnsiblePlaybook(o ...PlaybookOption) *PbCmd {
 	return &PbCmd{Playbook: pb}
 }
 
-// contains string in an array
-func contains(a string, list []string) bool {
-	for _, b := range list {
-		if b == a {
-			return true
-		}
-	}
-	return false
-}
-
-// readDir reads names of all files in playbookSet UID folder with the exclusion of excludedFiles
-func readDir(dir string, excludedFiles []string) ([]string, error) {
+// readDir reads main playbook file(s) from dir
+func readDir(dir string, patterns []string) ([]string, error) {
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 	playbookSetUIDdir, err := fs.Open(dir)
 	if err != nil {
@@ -128,16 +122,29 @@ func readDir(dir string, excludedFiles []string) ([]string, error) {
 		}
 	}()
 
-	var filePaths []string
+	var matches []string
 	if err := filepath.Walk(playbookSetUIDdir.Name(), func(path string, f os.FileInfo, err error) error {
-		if !contains(path, excludedFiles) && !f.IsDir() {
-			filePaths = append(filePaths, path)
+		if err != nil {
+			return err
 		}
+		if f.IsDir() {
+			return nil
+		}
+
+		for _, v := range patterns {
+			if matched, err := filepath.Match(v, filepath.Base(path)); err != nil {
+				return nil
+			} else if matched {
+				matches = append(matches, path)
+				return nil
+			}
+		}
+
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	return filePaths, nil
+	return matches, nil
 }
 
 // Changes parse 'ansible-playbook --check' results to determine whether there is a diff between

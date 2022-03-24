@@ -6,14 +6,14 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.6.2
   creationTimestamp: null
-  name: playbooksets.ansible.crossplane.io
+  name: ansibleruns.ansible.crossplane.io
 spec:
   group: ansible.crossplane.io
   names:
-    kind: PlaybookSet
-    listKind: PlaybookSetList
-    plural: playbooksets
-    singular: playbookset
+    kind: AnsibleRun
+    listKind: AnsibleRunList
+    plural: ansibleruns
+    singular: ansiblerun
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -23,7 +23,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: PlaybookSet represents a set of Ansible Playbooks.
+        description: AnsibleRun represents a set of Ansible Playbooks.
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -38,7 +38,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: A PlaybookSetSpec defines the desired state of a PlaybookSet.
+            description: A AnsibleRunSpec defines the desired state of a AnsibleRun.
             properties:
               deletionPolicy:
                 default: Delete
@@ -50,23 +50,53 @@ spec:
                 - Delete
                 type: string
               forProvider:
-                description: PlaybookSetParameters are the configurable fields of
-                  a PlaybookSet.
+                description: AnsibleRunParameters are the configurable fields of a
+                  AnsibleRun.
                 properties:
                   module:
-                    description: The configuration of this PlaybookSet; i.e. the configuration
-                      containing its playbook files. When the playbookSet's Provider
-                      source is 'Remote' (the default) this can be any address supported
-                      by Ansible.Builtin.git, TODO support other remotes https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html
-                      When the playbookSet's source is 'Inline' the content of a simple
+                    description: The configuration of this AnsibleRun; i.e. the configuration
+                      containing its playbook(s)/Role(s) files. When the AnsibleRun's
+                      Provider source is 'Remote' (the default) this can be any address
+                      supported by Ansible.Builtin.git, TODO support other remotes
+                      https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html
+                      When the AnsibleRun's source is 'Inline' the content of a simple
                       playbook.yml file may be written inline.
                     type: string
+                  playbook:
+                    description: This is the playbook name. This playbook is expected
+                      to be simply a way to call roles. This field is mutually exclusive
+                      with the “role” field. For remote source, the playbook is expected
+                      to be in the remote project directory. this filed has non effect
+                      on inline mode
+                    type: string
+                  role:
+                    description: 'Specifies a role to be executed. This field is mutually
+                      exclusive with the “playbook” field. For remote source This
+                      field can be: - a relative path within the project working directory
+                      - a relative path within one of the directories specified by
+                      ANSIBLE_ROLES_PATH environment variable or ansible-roles-path
+                      flag. this filed has non effect on inline mode'
+                    type: string
                   source:
-                    description: Source of configuration of this playbookSet.
+                    description: Source of configuration of this AnsibleRun.
                     enum:
                     - Remote
                     - Inline
                     type: string
+                  vars:
+                    description: Configuration variables.
+                    items:
+                      description: A Var represents an Ansible configuration variable.
+                      properties:
+                        key:
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - key
+                      - value
+                      type: object
+                    type: array
                 required:
                 - module
                 - source
@@ -116,11 +146,11 @@ spec:
             - forProvider
             type: object
           status:
-            description: A PlaybookSetStatus represents the observed state of a PlaybookSet.
+            description: A AnsibleRunStatus represents the observed state of a AnsibleRun.
             properties:
               atProvider:
-                description: PlaybookSetObservation are the observable fields of a
-                  PlaybookSet.
+                description: AnsibleRunObservation are the observable fields of a
+                  AnsibleRun.
                 type: object
               conditions:
                 description: Conditions of the resource.

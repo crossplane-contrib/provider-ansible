@@ -27,9 +27,8 @@ type ProviderConfigSpec struct {
 	// Credentials required to authenticate to this provider.
 	Credentials []ProviderCredentials `json:"credentials"`
 
-	// Configuration manage the necessary dependencies to run playbook
-	// it is expressed as inline yaml. This can be used to
-	// automatically fetch ansible roles dependencies.
+	// Configuration manage the necessary dependencies to run ansible collection.
+	// It is expressed as inline yaml.
 	// +optional
 	Configuration *string `json:"configuration,omitempty"`
 }

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package playbookset
+package ansiblerun
 
 import (
 	"context"
@@ -29,6 +29,8 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/provider-ansible/apis/v1alpha1"
 	"github.com/crossplane/provider-ansible/internal/ansible"
+	"github.com/crossplane/provider-ansible/pkg/galaxyutil"
+	"github.com/crossplane/provider-ansible/pkg/runnerutil"
 	getter "github.com/hashicorp/go-getter"
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
@@ -40,31 +42,31 @@ import (
 )
 
 const (
-	errNotPlaybookSet      = "managed resource is not a PlaybookSet custom resource"
+	errNotAnsibleRun       = "managed resource is not a AnsibleRun custom resource"
 	errTrackPCUsage        = "cannot track ProviderConfig usage"
 	errGetPC               = "cannot get ProviderConfig"
 	errGetCreds            = "cannot get credentials"
 	errWriteGitCreds       = "cannot write .git-credentials to /tmp dir"
+	errWriteConfig         = "cannot write ansible collection requirements in" + galaxyutil.RequirementsFile
 	errWriteCreds          = "cannot write Playbook credentials"
-	errRemoteConfiguration = "cannot get remote PlaybookSet configuration "
-	errWritePlaybookSet    = "cannot write PlaybookSet configuration in" + playbookYml
+	errRemoteConfiguration = "cannot get remote AnsibleRun configuration "
+	errWriteAnsibleRun     = "cannot write AnsibleRun configuration in" + runnerutil.PlaybookYml
 	errMkdir               = "cannot make Playbook directory"
 	errInit                = "cannot initialize Ansible client"
 	gitCredentialsFilename = ".git-credentials"
 )
 
 const (
-	playbookSetDir = "playbooks"
-	playbookYml    = "playbook.yml"
+	baseWorkingDir = "ansibleDir"
 )
 
 type params interface {
-	Init(ctx context.Context) (*ansible.PbCmd, error)
+	Init(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error)
 }
 
-// Setup adds a controller that reconciles PlaybookSet managed resources.
-func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
-	name := managed.ControllerName(v1alpha1.PlaybookSetGroupKind)
+// Setup adds a controller that reconciles AnsibleRun managed resources.
+func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, ansibleCollectionsPath, ansibleRolesPath string) error {
+	name := managed.ControllerName(v1alpha1.AnsibleRunGroupKind)
 
 	o := controller.Options{
 		RateLimiter: ratelimiter.NewDefaultManagedRateLimiter(rl),
@@ -76,16 +78,17 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
 		kube:  mgr.GetClient(),
 		usage: resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
 		fs:    fs,
-		ansible: func(dir string, excludedFiles []string) params {
+		ansible: func(dir string) params {
 			return ansible.Parameters{
-				Dir:           dir,
-				ExcludedFiles: excludedFiles,
+				WorkingDir:      dir,
+				CollectionsPath: ansibleCollectionsPath,
+				RolesPath:       ansibleRolesPath,
 			}
 		},
 	}
 
 	r := managed.NewReconciler(mgr,
-		resource.ManagedKind(v1alpha1.PlaybookSetGroupVersionKind),
+		resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind),
 		managed.WithExternalConnecter(c),
 		managed.WithLogger(l.WithValues("controller", name)),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))))
@@ -93,7 +96,7 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(name).
 		WithOptions(o).
-		For(&v1alpha1.PlaybookSet{}).
+		For(&v1alpha1.AnsibleRun{}).
 		Complete(r)
 }
 
@@ -103,7 +106,7 @@ type connector struct {
 	kube    client.Client
 	usage   resource.Tracker
 	fs      afero.Afero
-	ansible func(dir string, excludedFiles []string) params
+	ansible func(dir string) params
 }
 
 func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.ExternalClient, error) { //nolint:gocyclo
@@ -111,16 +114,14 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	// can't immediately think of a clean way to decompose it without
 	// affecting readability.
 
-	cr, ok := mg.(*v1alpha1.PlaybookSet)
+	cr, ok := mg.(*v1alpha1.AnsibleRun)
 	if !ok {
-		return nil, errors.New(errNotPlaybookSet)
+		return nil, errors.New(errNotAnsibleRun)
 	}
-
-	excludedFilesPath := []string{}
 
 	// NOTE(negz): This directory will be garbage collected by the workdir
 	// garbage collector that is started in Setup.
-	dir := filepath.Join(playbookSetDir, string(cr.GetUID()))
+	dir := filepath.Join(baseWorkingDir, string(cr.GetUID()))
 	if err := c.fs.MkdirAll(dir, 0700); resource.Ignore(os.IsExist, err) != nil {
 		return nil, errors.Wrap(err, errMkdir)
 	}
@@ -136,7 +137,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 	switch cr.Spec.ForProvider.Source {
 	case v1alpha1.ConfigurationSourceRemote:
-		// NOTE(ytsarev): Retrieve .git-credentials from Spec to /tmp outside of playbookSet directory
+		// NOTE(ytsarev): Retrieve .git-credentials from Spec to /tmp outside of AnsibleRun directory
 		gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
 		if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
 			return nil, errors.Wrap(err, errWriteGitCreds)
@@ -153,8 +154,6 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			if err := c.fs.WriteFile(p, data, 0600); err != nil {
 				return nil, errors.Wrap(err, errWriteGitCreds)
 			}
-			excludedFilesPath = append(excludedFilesPath, p)
-
 			// NOTE(ytsarev): Make go-getter pick up .git-credentials, see /.gitconfig in the container image
 			// TODO: check wether go-getter is used in the ansible case
 			err = os.Setenv("GIT_CRED_DIR", gitCredDir)
@@ -174,8 +173,8 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			return nil, errors.Wrap(err, errRemoteConfiguration)
 		}
 	case v1alpha1.ConfigurationSourceInline:
-		if err := c.fs.WriteFile(filepath.Join(dir, playbookYml), []byte(cr.Spec.ForProvider.Module), 0600); err != nil {
-			return nil, errors.Wrap(err, errWritePlaybookSet)
+		if err := c.fs.WriteFile(filepath.Join(dir, runnerutil.PlaybookYml), []byte(cr.Spec.ForProvider.Module), 0600); err != nil {
+			return nil, errors.Wrap(err, errWriteAnsibleRun)
 		}
 	}
 
@@ -189,34 +188,39 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		if err := c.fs.WriteFile(p, data, 0600); err != nil {
 			return nil, errors.Wrap(err, errWriteCreds)
 		}
-		excludedFilesPath = append(excludedFilesPath, p)
 	}
 
-	// NOTE(fahed): handle spec pc.Spec.Configuration
-	ps := c.ansible(dir, excludedFilesPath)
+	// configuration is a list of collections to be installed, it is stored in requirements file
+	if pc.Spec.Configuration != nil {
+		if err := c.fs.WriteFile(filepath.Join(dir, galaxyutil.RequirementsFile), []byte(*pc.Spec.Configuration), 0600); err != nil {
+			return nil, errors.Wrap(err, errWriteConfig)
+		}
+	}
 
-	pbCmd, err := ps.Init(ctx)
+	ps := c.ansible(dir)
+
+	r, err := ps.Init(ctx, cr)
 	if err != nil {
 		return nil, errors.Wrap(err, errInit)
 	}
 
-	return &external{pbCmd: pbCmd, kube: c.kube}, nil
+	return &external{runner: r, kube: c.kube}, nil
 }
 
 type external struct {
-	pbCmd *ansible.PbCmd
-	kube  client.Reader
+	runner *ansible.Runner
+	kube   client.Reader
 }
 
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
-	re, changes, err := c.pbCmd.ParseResults(ctx, mg)
+	/*re, changes, _ := c.pbCmd.ParseResults(ctx, mg)
 
 	if err != nil {
 		return managed.ExternalObservation{}, err
-	}
+	}*/
 	return managed.ExternalObservation{
-		ResourceExists:          re,
-		ResourceUpToDate:        !changes,
+		//ResourceExists:          re,
+		//ResourceUpToDate:        !changes,
 		ResourceLateInitialized: false,
 	}, nil
 }
@@ -224,10 +228,10 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.ExternalCreation, error) {
 
 	// TODO see ConnectionDetails
-	err := c.pbCmd.CreateOrUpdate(ctx, mg)
+	/*err := c.pbCmd.CreateOrUpdate(ctx, mg)
 	if err != nil {
 		return managed.ExternalCreation{}, err
-	}
+	}*/
 
 	return managed.ExternalCreation{
 		// Optionally return any details that may be required to connect to the
@@ -238,10 +242,10 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 
 func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.ExternalUpdate, error) {
 
-	err := c.pbCmd.CreateOrUpdate(ctx, mg)
+	/*err := c.pbCmd.CreateOrUpdate(ctx, mg)
 	if err != nil {
 		return managed.ExternalUpdate{}, err
-	}
+	}*/
 	return managed.ExternalUpdate{
 		// Optionally return any details that may be required to connect to the
 		// external resource. These will be stored as the connection secret.
@@ -250,9 +254,9 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 }
 
 func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
-	cr, ok := mg.(*v1alpha1.PlaybookSet)
+	cr, ok := mg.(*v1alpha1.AnsibleRun)
 	if !ok {
-		return errors.New(errNotPlaybookSet)
+		return errors.New(errNotAnsibleRun)
 	}
 
 	fmt.Printf("Deleting: %+v", cr)

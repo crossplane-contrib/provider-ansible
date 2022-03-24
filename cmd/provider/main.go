@@ -33,10 +33,12 @@ import (
 
 func main() {
 	var (
-		app            = kingpin.New(filepath.Base(os.Args[0]), "Template support for Crossplane.").DefaultEnvars()
-		debug          = app.Flag("debug", "Run with debug logging.").Short('d').Bool()
-		syncPeriod     = app.Flag("sync", "Controller manager sync period such as 300ms, 1.5h, or 2h45m").Short('s').Default("1h").Duration()
-		leaderElection = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").OverrideDefaultFromEnvar("LEADER_ELECTION").Bool()
+		app                    = kingpin.New(filepath.Base(os.Args[0]), "Template support for Crossplane.").DefaultEnvars()
+		debug                  = app.Flag("debug", "Run with debug logging.").Short('d').Bool()
+		ansibleCollectionsPath = app.Flag("ansible-collections-path", "Path where ansible collections are installed.").String()
+		ansibleRolesPath       = app.Flag("ansible-roles-path", "Path where role(s) exists.").String()
+		syncPeriod             = app.Flag("sync", "Controller manager sync period such as 300ms, 1.5h, or 2h45m").Short('s').Default("1h").Duration()
+		leaderElection         = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").OverrideDefaultFromEnvar("LEADER_ELECTION").Bool()
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -63,6 +65,6 @@ func main() {
 
 	rl := ratelimiter.NewDefaultProviderRateLimiter(ratelimiter.DefaultProviderRPS)
 	kingpin.FatalIfError(apis.AddToScheme(mgr.GetScheme()), "Cannot add Ansible APIs to scheme")
-	kingpin.FatalIfError(controller.Setup(mgr, log, rl), "Cannot setup Ansible controllers")
+	kingpin.FatalIfError(controller.Setup(mgr, log, rl, *ansibleCollectionsPath, *ansibleRolesPath), "Cannot setup Ansible controllers")
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
 }

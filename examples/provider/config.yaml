@@ -23,3 +23,9 @@ spec:
         namespace: crossplane-system
         name: gcp-credentials
         key: credentials
+  configuration: |
+    ---
+    collections:
+      - name: google.cloud
+        source: https://galaxy.ansible.com
+        version: "1.0.2"

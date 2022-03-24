@@ -37,12 +37,12 @@ var (
 	SchemeBuilder = &scheme.Builder{GroupVersion: SchemeGroupVersion}
 )
 
-// PlaybookSet type metadata.
+// AnsibleRun type metadata.
 var (
-	PlaybookSetKind             = reflect.TypeOf(PlaybookSet{}).Name()
-	PlaybookSetGroupKind        = schema.GroupKind{Group: Group, Kind: PlaybookSetKind}.String()
-	PlaybookSetKindAPIVersion   = PlaybookSetKind + "." + SchemeGroupVersion.String()
-	PlaybookSetGroupVersionKind = SchemeGroupVersion.WithKind(PlaybookSetKind)
+	AnsibleRunKind             = reflect.TypeOf(AnsibleRun{}).Name()
+	AnsibleRunGroupKind        = schema.GroupKind{Group: Group, Kind: AnsibleRunKind}.String()
+	AnsibleRunKindAPIVersion   = AnsibleRunKind + "." + SchemeGroupVersion.String()
+	AnsibleRunGroupVersionKind = SchemeGroupVersion.WithKind(AnsibleRunKind)
 )
 
 // ProviderConfig type metadata.
@@ -67,7 +67,7 @@ var (
 )
 
 func init() {
-	SchemeBuilder.Register(&PlaybookSet{}, &PlaybookSetList{})
+	SchemeBuilder.Register(&AnsibleRun{}, &AnsibleRunList{})
 	SchemeBuilder.Register(&ProviderConfig{}, &ProviderConfigList{})
 	SchemeBuilder.Register(&ProviderConfigUsage{}, &ProviderConfigUsageList{})
 }

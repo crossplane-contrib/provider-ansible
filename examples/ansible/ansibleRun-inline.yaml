@@ -1,5 +1,5 @@
 apiVersion: ansible.crossplane.io/v1alpha1
-kind: PlaybookSet
+kind: AnsibleRun
 metadata:
   name: example
 spec:

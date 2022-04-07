@@ -46,8 +46,7 @@ spec:
             properties:
               configuration:
                 description: Configuration manage the necessary dependencies to run
-                  playbook it is expressed as inline yaml. This can be used to automatically
-                  fetch ansible roles dependencies.
+                  ansible collection. It is expressed as inline yaml.
                 type: string
               credentials:
                 description: Credentials required to authenticate to this provider.

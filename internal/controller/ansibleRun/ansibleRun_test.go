@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package playbookset
+package ansiblerun
 
 import (
 	"context"
@@ -32,9 +32,9 @@ import (
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
-	"github.com/crossplane/provider-ansible/internal/ansible"
-
 	"github.com/crossplane/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane/provider-ansible/internal/ansible"
+	"github.com/crossplane/provider-ansible/pkg/runnerutil"
 )
 
 type ErrFs struct {
@@ -59,11 +59,11 @@ func (e *ErrFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, e
 }
 
 type MockPs struct {
-	MockInit func(ctx context.Context) (*ansible.PbCmd, error)
+	MockInit func(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error)
 }
 
-func (ps MockPs) Init(ctx context.Context) (*ansible.PbCmd, error) {
-	return ps.MockInit(ctx)
+func (ps MockPs) Init(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error) {
+	return ps.MockInit(ctx, cr)
 }
 
 func TestConnect(t *testing.T) {
@@ -75,7 +75,7 @@ func TestConnect(t *testing.T) {
 		kube    client.Client
 		usage   resource.Tracker
 		fs      afero.Afero
-		ansible func(dir string, excludedFiles []string) params
+		ansible func(dir string) params
 	}
 
 	type args struct {
@@ -89,13 +89,13 @@ func TestConnect(t *testing.T) {
 		args   args
 		want   error
 	}{
-		"NotPlaybookSetError": {
-			reason: "We should return an error if the supplied managed resource is not a PlaybookSet",
+		"NotAnsibleRunError": {
+			reason: "We should return an error if the supplied managed resource is not a AnsibleRun",
 			fields: fields{},
 			args: args{
 				mg: nil,
 			},
-			want: errors.New(errNotPlaybookSet),
+			want: errors.New(errNotAnsibleRun),
 		},
 		"MakeDirError": {
 			reason: "We should return any error encountered while making a directory for our configuration",
@@ -103,12 +103,12 @@ func TestConnect(t *testing.T) {
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:   afero.NewMemMapFs(),
-						errs: map[string]error{filepath.Join(playbookSetDir, string(uid)): errBoom},
+						errs: map[string]error{filepath.Join(baseWorkingDir, string(uid)): errBoom},
 					},
 				},
 			},
 			args: args{
-				mg: &v1alpha1.PlaybookSet{
+				mg: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 				},
 			},
@@ -121,7 +121,7 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 			},
 			args: args{
-				mg: &v1alpha1.PlaybookSet{
+				mg: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 				},
 			},
@@ -137,9 +137,9 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 			},
 			args: args{
-				mg: &v1alpha1.PlaybookSet{
+				mg: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
-					Spec: v1alpha1.PlaybookSetSpec{
+					Spec: v1alpha1.AnsibleRunSpec{
 						ResourceSpec: xpv1.ResourceSpec{
 							ProviderConfigReference: &xpv1.Reference{},
 						},
@@ -169,9 +169,9 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 			},
 			args: args{
-				mg: &v1alpha1.PlaybookSet{
+				mg: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
-					Spec: v1alpha1.PlaybookSetSpec{
+					Spec: v1alpha1.AnsibleRunSpec{
 						ResourceSpec: xpv1.ResourceSpec{
 							ProviderConfigReference: &xpv1.Reference{},
 						},
@@ -198,14 +198,14 @@ func TestConnect(t *testing.T) {
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:   afero.NewMemMapFs(),
-						errs: map[string]error{filepath.Join(playbookSetDir, string(uid), pbCreds): errBoom},
+						errs: map[string]error{filepath.Join(baseWorkingDir, string(uid), pbCreds): errBoom},
 					},
 				},
 			},
 			args: args{
-				mg: &v1alpha1.PlaybookSet{
+				mg: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
-					Spec: v1alpha1.PlaybookSetSpec{
+					Spec: v1alpha1.AnsibleRunSpec{
 						ResourceSpec: xpv1.ResourceSpec{
 							ProviderConfigReference: &xpv1.Reference{},
 						},
@@ -232,18 +232,18 @@ func TestConnect(t *testing.T) {
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:   afero.NewMemMapFs(),
-						errs: map[string]error{filepath.Join("/tmp", playbookSetDir, string(uid), ".git-credentials"): errBoom},
+						errs: map[string]error{filepath.Join("/tmp", baseWorkingDir, string(uid), ".git-credentials"): errBoom},
 					},
 				},
 			},
 			args: args{
-				mg: &v1alpha1.PlaybookSet{
+				mg: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
-					Spec: v1alpha1.PlaybookSetSpec{
+					Spec: v1alpha1.AnsibleRunSpec{
 						ResourceSpec: xpv1.ResourceSpec{
 							ProviderConfigReference: &xpv1.Reference{},
 						},
-						ForProvider: v1alpha1.PlaybookSetParameters{
+						ForProvider: v1alpha1.AnsibleRunParameters{
 							Module: "github.com/crossplane/rocks",
 							Source: v1alpha1.ConfigurationSourceRemote,
 						},
@@ -262,25 +262,25 @@ func TestConnect(t *testing.T) {
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:   afero.NewMemMapFs(),
-						errs: map[string]error{filepath.Join(playbookSetDir, string(uid), playbookYml): errBoom},
+						errs: map[string]error{filepath.Join(baseWorkingDir, string(uid), runnerutil.PlaybookYml): errBoom},
 					},
 				},
 			},
 			args: args{
-				mg: &v1alpha1.PlaybookSet{
+				mg: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
-					Spec: v1alpha1.PlaybookSetSpec{
+					Spec: v1alpha1.AnsibleRunSpec{
 						ResourceSpec: xpv1.ResourceSpec{
 							ProviderConfigReference: &xpv1.Reference{},
 						},
-						ForProvider: v1alpha1.PlaybookSetParameters{
+						ForProvider: v1alpha1.AnsibleRunParameters{
 							Module: "I'm Yaml!",
 							Source: v1alpha1.ConfigurationSourceInline,
 						},
 					},
 				},
 			},
-			want: errors.Wrap(errBoom, errWritePlaybookSet),
+			want: errors.Wrap(errBoom, errWriteAnsibleRun),
 		},
 		"AnsibleInitError": {
 			reason: "We should return any error encountered while initializing Playbook Client",
@@ -290,16 +290,16 @@ func TestConnect(t *testing.T) {
 				},
 				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string, _ []string) params {
+				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context) (*ansible.PbCmd, error) { return nil, errBoom },
+						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error) { return nil, errBoom },
 					}
 				},
 			},
 			args: args{
-				mg: &v1alpha1.PlaybookSet{
+				mg: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
-					Spec: v1alpha1.PlaybookSetSpec{
+					Spec: v1alpha1.AnsibleRunSpec{
 						ResourceSpec: xpv1.ResourceSpec{
 							ProviderConfigReference: &xpv1.Reference{},
 						},
@@ -316,16 +316,16 @@ func TestConnect(t *testing.T) {
 				},
 				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string, _ []string) params {
+				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context) (*ansible.PbCmd, error) { return nil, nil },
+						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error) { return nil, nil },
 					}
 				},
 			},
 			args: args{
-				mg: &v1alpha1.PlaybookSet{
+				mg: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
-					Spec: v1alpha1.PlaybookSetSpec{
+					Spec: v1alpha1.AnsibleRunSpec{
 						ResourceSpec: xpv1.ResourceSpec{
 							ProviderConfigReference: &xpv1.Reference{},
 						},

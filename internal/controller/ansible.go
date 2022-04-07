@@ -21,19 +21,19 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
+	ansiblerun "github.com/crossplane/provider-ansible/internal/controller/ansibleRun"
 
 	"github.com/crossplane/provider-ansible/internal/controller/config"
-	playbook "github.com/crossplane/provider-ansible/internal/controller/playbookset"
 )
 
 // Setup creates all Template controllers with the supplied logger and adds them to
 // the supplied manager.
-func Setup(mgr ctrl.Manager, l logging.Logger, wl workqueue.RateLimiter) error {
-	for _, setup := range []func(ctrl.Manager, logging.Logger, workqueue.RateLimiter) error{
+func Setup(mgr ctrl.Manager, l logging.Logger, wl workqueue.RateLimiter, ansibleCollectionsPath, ansibleRolesPath string) error {
+	for _, setup := range []func(ctrl.Manager, logging.Logger, workqueue.RateLimiter, string, string) error{
 		config.Setup,
-		playbook.Setup,
+		ansiblerun.Setup,
 	} {
-		if err := setup(mgr, l, wl); err != nil {
+		if err := setup(mgr, l, wl, ansibleCollectionsPath, ansibleRolesPath); err != nil {
 			return err
 		}
 	}

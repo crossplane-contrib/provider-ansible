@@ -20,131 +20,300 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
-	"github.com/apenella/go-ansible/pkg/options"
-	"github.com/apenella/go-ansible/pkg/playbook"
-	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
-	"github.com/crossplane/crossplane-runtime/pkg/resource"
-	"github.com/spf13/afero"
+	"github.com/crossplane/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane/provider-ansible/pkg/galaxyutil"
+	"github.com/crossplane/provider-ansible/pkg/runnerutil"
 )
 
-// Parameters are minimal needed Parameters to initializes ansible-playbook command
+const (
+	// AnsibleRolesPath is the key defined by the user
+	AnsibleRolesPath = "ANSIBLE_ROLE_PATH"
+	// AnsibleCollectionsPath is key defined by the user
+	AnsibleCollectionsPath = "ANSIBLE_COLLECTION_PATH"
+)
+
+// Parameters are minimal needed Parameters to initializes ansible-runner command
 type Parameters struct {
-	// Dir in which to execute the ansible-playbook binary.
-	Dir string
-
-	// File to be ignored when executing the ansible-playbook binary.
-	ExcludedFiles []string
+	// Dir in which to execute the ansible-runner binary.
+	WorkingDir      string
+	CollectionsPath string
+	RolesPath       string
 }
 
-// A PlaybookOption configures an AnsiblePlaybookCmd.
-type PlaybookOption func(*playbook.AnsiblePlaybookCmd)
+// A runnerOption configures a Runner.
+type runnerOption func(*Runner)
 
-// PbCmd is a playbook cmd
-type PbCmd struct {
-	Playbook *playbook.AnsiblePlaybookCmd
-}
-
-// WithPlaybooks initializes Playbooks list.
-func WithPlaybooks(playbooks []string) PlaybookOption {
-	return func(ap *playbook.AnsiblePlaybookCmd) {
-		ap.Playbooks = append(ap.Playbooks, playbooks...)
+// withPath initializes a runner path.
+func withPath(path string) runnerOption {
+	return func(r *Runner) {
+		r.Path = path
 	}
 }
 
-// WithStdoutCallback defines which is the stdout callback method.
-func WithStdoutCallback(stdoutCallback string) PlaybookOption {
-	return func(ap *playbook.AnsiblePlaybookCmd) {
-		ap.StdoutCallback = stdoutCallback
+// withCmdFunc defines the runner CmdFunc.
+func withCmdFunc(cmdFunc cmdFuncType) runnerOption {
+	return func(r *Runner) {
+		r.cmdFunc = cmdFunc
 	}
 }
 
-// WithConnectionOptions defines the ansible's playbook connection options.
-func WithConnectionOptions(options *options.AnsibleConnectionOptions) PlaybookOption {
-	return func(ap *playbook.AnsiblePlaybookCmd) {
-		ap.ConnectionOptions = options
+// withAnsibleVerbosity set the ansible-runner verbosity.
+func withAnsibleVerbosity(verbosity int) runnerOption {
+	return func(r *Runner) {
+		r.ansibleVerbosity = verbosity
 	}
 }
 
-// WithOptions defines the ansible's playbook options.
-func WithOptions(options *playbook.AnsiblePlaybookOptions) PlaybookOption {
-	return func(ap *playbook.AnsiblePlaybookCmd) {
-		ap.Options = options
+// withAnsibleGathering set the ansible-runner default policy of fact gathering.
+func withAnsibleGathering(gathering string) runnerOption {
+	return func(r *Runner) {
+		r.ansibleGathering = gathering
 	}
 }
 
-// Init initializes pbCmd from parameters
-func (p Parameters) Init(ctx context.Context) (*PbCmd, error) {
+// withAnsibleHosts set the ansible-runner hosts to execute against.
+func withAnsibleHosts(hosts string) runnerOption {
+	return func(r *Runner) {
+		r.ansibleHosts = hosts
+	}
+}
 
-	// Read playbooks filename from dir
-	pbList, err := readDir(p.Dir, p.ExcludedFiles)
+type cmdFuncType func(gathering string, hosts string, verbosity int) *exec.Cmd
+
+// playbookCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L75-L90
+func playbookCmdFunc(path string) (cmdFuncType, error) {
+	runnerBinary, err := runnerutil.RunnerBinary()
 	if err != nil {
 		return nil, err
 	}
-	return NewAnsiblePlaybook(WithPlaybooks(pbList),
-		// `ansible-playbook` cmd output JSON Serialization
-		WithStdoutCallback("json"),
-		// e.g options.AnsibleConnectionOptions{Connection: "local"}
-		WithConnectionOptions(&options.AnsibleConnectionOptions{}),
-		// e.g playbook.AnsiblePlaybookOptions{Inventory: "127.0.0.1,"}
-		WithOptions(&playbook.AnsiblePlaybookOptions{})), nil
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
+	return func(_ string, hosts string, verbosity int) *exec.Cmd {
+		cmdArgs := []string{"run", wd}
+		cmdOptions := []string{
+			"-p", path,
+			"--hosts", hosts,
+		}
+
+		// check the verbosity since the exec.Command will fail if an arg as "" or " " be informed
+		if verbosity > 0 {
+			cmdOptions = append(cmdOptions, runnerutil.AnsibleVerbosityString(verbosity))
+		}
+		// gosec is disabled here because of G204. We should pay attention that user can't
+		// make command injection via command argument
+		return exec.Command(runnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+	}, nil
 }
 
-// NewAnsiblePlaybook returns a pbCmd that will be used as ansible-playbook client
-func NewAnsiblePlaybook(o ...PlaybookOption) *PbCmd {
-
-	pb := &playbook.AnsiblePlaybookCmd{
-		Playbooks: []string{},
+// roleCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L92-L118
+func roleCmdFunc(path string) (cmdFuncType, error) {
+	rolePath, roleName := filepath.Split(path)
+	runnerBinary, err := runnerutil.RunnerBinary()
+	if err != nil {
+		return nil, err
 	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
+	return func(gathering string, hosts string, verbosity int) *exec.Cmd {
+		cmdOptions := []string{
+			"--role", roleName,
+			"--roles-path", rolePath,
+			"--hosts", hosts,
+		}
+		cmdArgs := []string{"run", wd}
+
+		// check the verbosity since the exec.Command will fail if an arg as "" or " " be informed
+		if verbosity > 0 {
+			cmdOptions = append(cmdOptions, runnerutil.AnsibleVerbosityString(verbosity))
+		}
+		// ansibleGathering := os.Getenv("ANSIBLE_GATHERING")
+
+		// When running a role directly, ansible-runner does not respect the ANSIBLE_GATHERING
+		// environment variable, so we need to skip fact collection manually
+		if gathering == "explicit" {
+			cmdOptions = append(cmdOptions, "--role-skip-facts")
+		}
+
+		// gosec is disabled here because of G204. We should pay attention that user can't
+		// make command injection via command argument
+		return exec.Command(runnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+	}, nil
+}
+
+// galaxyInstall Install non-exists collections with ansible-galaxy cli
+func (p Parameters) galaxyInstall() error {
+	galaxyBinary, err := galaxyutil.GalaxyBinary()
+	if err != nil {
+		return err
+	}
+
+	requirementsFilePath := runnerutil.GetFullPath(p.WorkingDir, galaxyutil.RequirementsFile)
+
+	cmdArgs := []string{"collection", "install"}
+	cmdOptions := []string{
+		"--requirements-file", requirementsFilePath,
+	}
+
+	// ansible-galaxy is by default verbose
+	cmdOptions = append(cmdOptions, "--verbose")
+
+	// gosec is disabled here because of G204. We should pay attention that user can't
+	// make command injection via command argument
+	dc := exec.Command(galaxyBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+
+	out, err := dc.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to install galaxy collections: %v: %v", string(out), err)
+	}
+	return nil
+}
+
+// Init initializes a new runner from parameters
+func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun) (*Runner, error) {
+	if err := p.galaxyInstall(); err != nil {
+		return nil, err
+	}
+
+	vars, err := runnerutil.ConvertKVVarsToMap(cr.Spec.ForProvider.Vars)
+	if err != nil {
+		return nil, err
+	}
+
+	addRolePlaybookPaths(p, vars, cr)
+
+	if cr.Spec.ForProvider.Source == v1alpha1.ConfigurationSourceInline {
+		// For inline mode playbook is stored in the predefined playbookYml file
+		// override user input if exists
+		cr.Spec.ForProvider.Playbook = runnerutil.PlaybookYml
+		// TODO handle ansible roles inline mode
+		cr.Spec.ForProvider.Role = ""
+	}
+
+	var cmdFunc cmdFuncType
+	var path string
+
+	switch {
+	case cr.Spec.ForProvider.Playbook != "":
+		path = cr.Spec.ForProvider.Playbook
+		if cmdFunc, err = playbookCmdFunc(path); err != nil {
+			return nil, err
+		}
+	case cr.Spec.ForProvider.Role != "":
+		path = cr.Spec.ForProvider.Role
+		if cmdFunc, err = roleCmdFunc(path); err != nil {
+			return nil, err
+		}
+	}
+
+	return new(withPath(path),
+		withCmdFunc(cmdFunc),
+		// TODO add verbosity filed to the API, now it is ignored by (0) value
+		withAnsibleVerbosity(0),
+		withAnsibleGathering(vars["ANSIBLE_GATHERING"]),
+		withAnsibleHosts(vars["hosts"]),
+	), nil
+}
+
+// Runner struct
+type Runner struct {
+	Path             string // path on disk to a playbook or role depending on what cmdFunc expects
+	Vars             map[string]interface{}
+	cmdFunc          cmdFuncType // returns a Cmd that runs ansible-runner
+	ansibleVerbosity int
+	ansibleGathering string
+	ansibleHosts     string
+}
+
+// new returns a runner that will be used as ansible-runner client
+func new(o ...runnerOption) *Runner {
+
+	r := &Runner{}
 
 	for _, fn := range o {
-		fn(pb)
+		fn(r)
 	}
 
-	return &PbCmd{Playbook: pb}
+	return r
 }
 
-// contains string in an array
-func contains(a string, list []string) bool {
-	for _, b := range list {
-		if b == a {
-			return true
+// addRolePlaybookPaths will add the full path based on absolute path of cloning dir
+// Func from operator SDK
+func addRolePlaybookPaths(p Parameters, vars map[string]string, cr *v1alpha1.AnsibleRun) {
+	if len(cr.Spec.ForProvider.Playbook) > 0 {
+		cr.Spec.ForProvider.Playbook = runnerutil.GetFullPath(p.WorkingDir, cr.Spec.ForProvider.Playbook)
+	}
+
+	if len(cr.Spec.ForProvider.Role) > 0 {
+		collectionsPath := p.CollectionsPath
+		rolesPath := p.RolesPath
+		switch {
+		case vars[AnsibleRolesPath] != "":
+			rolesPath = vars[AnsibleRolesPath]
+		case vars[AnsibleCollectionsPath] != "":
+			collectionsPath = vars[AnsibleCollectionsPath]
+		}
+
+		possibleRolePaths := getPossibleRolePaths(p.WorkingDir, cr.Spec.ForProvider.Role, collectionsPath, rolesPath)
+		for _, possiblePath := range possibleRolePaths {
+			if _, err := os.Stat(possiblePath); err == nil {
+				cr.Spec.ForProvider.Role = possiblePath
+				break
+			}
 		}
 	}
-	return false
 }
 
-// readDir reads names of all files in playbookSet UID folder with the exclusion of excludedFiles
-func readDir(dir string, excludedFiles []string) ([]string, error) {
-	fs := afero.Afero{Fs: afero.NewOsFs()}
-	playbookSetUIDdir, err := fs.Open(dir)
-	if err != nil {
-		return nil, err
+// getPossibleRolePaths returns list of possible absolute paths derived from a user provided value.
+func getPossibleRolePaths(workingDir, path, ansibleRolesPath, ansibleCollectionsPath string) []string {
+	possibleRolePaths := []string{}
+	if filepath.IsAbs(path) || len(path) == 0 {
+		return append(possibleRolePaths, path)
 	}
-	defer func() {
-		if err := playbookSetUIDdir.Close(); err != nil {
-			fmt.Println("cannot close file: %w", err)
+	fqcn := strings.Split(path, ".")
+	// If fqcn is a valid fully qualified collection name, it is <namespace>.<collectionName>.<roleName>
+	if len(fqcn) == 3 {
+		if ansibleCollectionsPath == "" {
+			ansibleCollectionsPath = "/usr/share/ansible/collections"
+			home, err := os.UserHomeDir()
+			if err == nil {
+				homeCollections := filepath.Join(home, ".ansible/collections")
+				ansibleCollectionsPath = ansibleCollectionsPath + ":" + homeCollections
+			}
 		}
-	}()
+		for _, possiblePathParent := range strings.Split(ansibleCollectionsPath, ":") {
+			possiblePath := filepath.Join(possiblePathParent, "ansible_collections", fqcn[0], fqcn[1], "roles", fqcn[2])
+			possibleRolePaths = append(possibleRolePaths, possiblePath)
+		}
+	}
 
-	var filePaths []string
-	if err := filepath.Walk(playbookSetUIDdir.Name(), func(path string, f os.FileInfo, err error) error {
-		if !contains(path, excludedFiles) && !f.IsDir() {
-			filePaths = append(filePaths, path)
+	// Check for the role where Ansible would. If it exists, use it.
+	if ansibleRolesPath != "" {
+		for _, possiblePathParent := range strings.Split(ansibleRolesPath, ":") {
+			// "roles" is optionally a part of the path. Check with, and without.
+			possibleRolePaths = append(possibleRolePaths, filepath.Join(possiblePathParent, path), filepath.Join(possiblePathParent, "roles", path))
 		}
-		return nil
-	}); err != nil {
-		return nil, err
 	}
-	return filePaths, nil
+	// Roles can also live in the working directory.
+	return append(possibleRolePaths, runnerutil.GetFullPath(workingDir, filepath.Join("roles", path)))
 }
 
 // Changes parse 'ansible-playbook --check' results to determine whether there is a diff between
 // the desired and the actual state of the configuration. It returns true if
 // there is a diff.
 // TODO we should handle EXTRA_VARS as we invoke the Diff func
-func diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
+/*func diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
 
 	var changes bool
 	// check changes for all hosts
@@ -156,25 +325,24 @@ func diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
 	}
 
 	return changes, exists(res)
-}
+}*/
 
 // Exists must be true if a corresponding external resource exists
-func exists(res *results.AnsiblePlaybookJSONResults) bool {
+/*func exists(res *results.AnsiblePlaybookJSONResults) bool {
 	var resourcesExists bool
 	// check changes for all hosts
 	for _, stats := range res.Stats {
-		/* We assume that if stats.Ok == stats.Changed { 0 resourcesexists }
-		 */
+		//We assume that if stats.Ok == stats.Changed { 0 resourcesexists }
 		if stats.Ok-stats.Changed > 0 {
 			resourcesExists = true
 			break
 		}
 	}
 	return resourcesExists
-}
+}*/
 
 // ParseResults play `ansible-playbook` then parse JSON stream results with check mode
-func (pbCmd *PbCmd) ParseResults(ctx context.Context, mg resource.Managed) (bool, bool, error) {
+/*func (pbCmd *PbCmd) ParseResults(ctx context.Context, mg resource.Managed) (bool, bool, error) {
 	// Enable the check flag
 	// Check don't make any changes; instead, try to predict some of the changes that may occur
 	pbCmd.Playbook.Options.Check = true
@@ -184,20 +352,20 @@ func (pbCmd *PbCmd) ParseResults(ctx context.Context, mg resource.Managed) (bool
 	}
 	changes, re := diff(result)
 	return changes, re, nil
-}
+}*/
 
 // CreateOrUpdate run playbook during  update or create
-func (pbCmd *PbCmd) CreateOrUpdate(ctx context.Context, mg resource.Managed) error {
+/*func (pbCmd *PbCmd) CreateOrUpdate(ctx context.Context, mg resource.Managed) error {
 	err := pbCmd.Playbook.Run(ctx)
 	return err
-}
+}*/
 
 // run playbook and parse result
-func runAndParsePlaybook(ctx context.Context, pbCmd *PbCmd) (*results.AnsiblePlaybookJSONResults, error) {
+/*func runAndParsePlaybook(ctx context.Context, pbCmd *PbCmd) (*results.AnsiblePlaybookJSONResults, error) {
 	go func(ctx context.Context, pbCmd *PbCmd) {
 		_ = pbCmd.Playbook.Run(ctx)
 	}(ctx, pbCmd)
 
 	res, err := results.ParseJSONResultsStream(os.Stdout)
 	return res, err
-}
+}*/

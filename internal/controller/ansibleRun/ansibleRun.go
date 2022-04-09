@@ -190,9 +190,9 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		}
 	}
 
-	// configuration is a list of collections to be installed, it is stored in requirements file
-	if pc.Spec.Configuration != nil {
-		if err := c.fs.WriteFile(filepath.Join(dir, galaxyutil.RequirementsFile), []byte(*pc.Spec.Configuration), 0600); err != nil {
+	// Requirements is a list of collections to be installed, it is stored in requirements file
+	if pc.Spec.Requirements != nil {
+		if err := c.fs.WriteFile(filepath.Join(dir, galaxyutil.RequirementsFile), []byte(*pc.Spec.Requirements), 0600); err != nil {
 			return nil, errors.Wrap(err, errWriteConfig)
 		}
 	}

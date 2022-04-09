@@ -44,10 +44,6 @@ spec:
           spec:
             description: A ProviderConfigSpec defines the desired state of a ProviderConfig.
             properties:
-              configuration:
-                description: Configuration manage the necessary dependencies to run
-                  ansible collection. It is expressed as inline yaml.
-                type: string
               credentials:
                 description: Credentials required to authenticate to this provider.
                 items:
@@ -110,6 +106,10 @@ spec:
                   - source
                   type: object
                 type: array
+              requirements:
+                description: Requirements manage the necessary dependencies to run
+                  ansible collection. It is expressed as inline yaml.
+                type: string
             required:
             - credentials
             type: object

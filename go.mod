@@ -5,10 +5,10 @@ go 1.17
 require (
 	github.com/crossplane/crossplane-runtime v0.15.1
 	github.com/crossplane/crossplane-tools v0.0.0-20210320162312-1baca298c527
-	github.com/google/go-cmp v0.5.6
+	github.com/google/go-cmp v0.5.7
 	github.com/hashicorp/go-getter v1.4.0
 	github.com/pkg/errors v0.9.1
-	github.com/spf13/afero v1.6.0
+	github.com/spf13/afero v1.8.2
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gotest.tools/v3 v3.0.3
@@ -20,7 +20,7 @@ require (
 
 require (
 	cloud.google.com/go v0.81.0 // indirect
-	cloud.google.com/go/storage v1.10.0 // indirect
+	cloud.google.com/go/storage v1.14.0 // indirect
 	github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751 // indirect
 	github.com/alecthomas/units v0.0.0-20190924025748-f65c72e2690d // indirect
 	github.com/aws/aws-sdk-go v1.15.78 // indirect

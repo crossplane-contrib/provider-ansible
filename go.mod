@@ -11,7 +11,7 @@ require (
 	github.com/spf13/afero v1.8.2
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
-	gotest.tools/v3 v3.0.3
+	gotest.tools/v3 v3.1.0
 	k8s.io/apimachinery v0.23.5
 	k8s.io/client-go v0.23.5
 	sigs.k8s.io/controller-runtime v0.11.2

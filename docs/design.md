@@ -23,6 +23,7 @@
       - [Writing Idempotent Roles or Playbooks](#writing-idempotent-roles-or-playbooks)
       - [Running Roles or Playbooks Per State](#running-roles-or-playbooks-per-state)
   - [Comparing with Ansible Operator](#comparing-with-ansible-operator)
+    - [Difference between Ansible Provider and Ansible Operator](#difference-between-ansible-provider-and-ansible-operator)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 

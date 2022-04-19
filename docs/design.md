@@ -12,6 +12,7 @@
   - [Requirements Declaration](#requirements-declaration)
   - [Supported Ansible Contents](#supported-ansible-contents)
   - [Passing Variables](#passing-variables)
+    - [Passing Variables via ProviderConfig](#passing-variables-via-providerconfig)
   - [AnsibleRun Lifecycle](#ansiblerun-lifecycle)
     - [Resource Management Lifecycle](#resource-management-lifecycle)
     - [Mapping Ansible Run to Resource Management Lifecycle](#mapping-ansible-run-to-resource-management-lifecycle)
@@ -19,11 +20,13 @@
     - [Ansible Run Policy](#ansible-run-policy)
       - [Policy ObserveAndDelete](#policy-observeanddelete)
       - [Policy CheckWhenObserve](#policy-checkwhenobserve)
+      - [Why Using Annotation](#why-using-annotation)
     - [Best Practices to Write Ansible Contents](#best-practices-to-write-ansible-contents)
       - [Writing Idempotent Roles or Playbooks](#writing-idempotent-roles-or-playbooks)
       - [Running Roles or Playbooks Per State](#running-roles-or-playbooks-per-state)
   - [Comparing with Ansible Operator](#comparing-with-ansible-operator)
     - [Difference between Ansible Provider and Ansible Operator](#difference-between-ansible-provider-and-ansible-operator)
+  - [Appendix: Feature List](#appendix-feature-list)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 

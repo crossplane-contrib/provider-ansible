@@ -335,7 +335,7 @@ The reason that AnsibleRun supports the same set of variable types as Ansible do
 
 After you define the variables as above, you can reference them in Ansible roles or playbooks using Jinja2 syntax as below:
 
-```
+```yaml
 - name: An example to show the use of vars
   debug:
     msg: "Print {{ foo }}."
@@ -479,7 +479,7 @@ ansible_provider_meta.managed_resource.state = absence|presence
 
 This variable belongs to a special set of variables maintained by Ansible provider where developers who create the Ansible contents can reference these variables when needed. For example, to run Ansible playbooks conditionally by checking the variable that indicates the presence or absence of `AnsibleRun` as below:
 
-```
+```yaml
 - include_tasks: setup-resource.yml
   when: ansible_provider_meta.managed_resource.state == 'present'
 

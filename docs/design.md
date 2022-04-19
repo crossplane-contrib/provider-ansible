@@ -13,8 +13,8 @@
   - [Supported Ansible Contents](#supported-ansible-contents)
   - [Passing Variables](#passing-variables)
   - [AnsibleRun Lifecycle](#ansiblerun-lifecycle)
-    - [Managed Resource Lifecycle](#managed-resource-lifecycle)
-    - [Mapping Ansible Run to Managed Resource Lifecycle](#mapping-ansible-run-to-managed-resource-lifecycle)
+    - [Resource Management Lifecycle](#resource-management-lifecycle)
+    - [Mapping Ansible Run to Resource Management Lifecycle](#mapping-ansible-run-to-resource-management-lifecycle)
     - [Preparing Ansible Contents](#preparing-ansible-contents)
     - [Ansible Run Policy](#ansible-run-policy)
       - [Policy ObserveAndDelete](#policy-observeanddelete)
@@ -303,7 +303,7 @@ spec:
 
 Ansible uses variables to manage differences among systems on which Ansible operates, so it can run roles or playbooks on multiple systems using single command. Ansible provider allows you to pass those differences into Ansible run through `vars` field when define `AnsibleRun` resource. 
 
-Here is an example to define some variables including a simple variable, a list variable, and a dictionary variable. These variables will be passed into Ansible role `sample_namespace.sample_role` for it to consume:
+Here is an example to define variables including a simple variable, a list variable, and a dictionary variable. These variable types are also supported in [Ansible](https://docs.ansible.com/ansible/latest/user_guide/playbooks_variables.html). The variables will be passed into Ansible role `sample_namespace.sample_role` to consume:
 
 ```yaml
 apiVersion: ansible.crossplane.io/v1alpha1
@@ -325,13 +325,29 @@ spec:
     name: provider-config-example
 ```
 
-The way to reference these variables in Ansible roles or playbooks is exactly the same as it is defined in Ansible docs using Jinja2 syntax:
+The reason that AnsibleRun supports the same set of variable types as Ansible does is that:
+
+- By following the same way, it makes the Ansible provider adoption smoothly for existing Ansible users who are familiar with the variable use in Ansible.
+- It is not always sufficient to express variables using simple key/value pair. Some times, people may ask for variables in the form of list or dictionary.
+
+After you define the variables as above, you can reference them in Ansible roles or playbooks using Jinja2 syntax as below:
 
 ```
-{{ foo }}
-{{ bar[0] }}
-{{ baz['field1'] }}
-{{ baz.field2 }} 
+- name: An example to show the use of vars
+  debug:
+    msg: "Print {{ foo }}."
+
+- name: An example to show the use of vars
+  debug:
+    msg: "Print {{ bar[0] }}."
+
+- name: An example to show the use of vars
+  debug:
+    msg: "Print {{ baz['field1'] }}."
+
+- name: An example to show the use of vars
+  debug:
+    msg: "Print {{ baz.field2 }}."
 ```
 
 Besides that, you can also define variables in a `ConfigMap` or `Secret` as reusable piece, then reference it in one or more `AnsibleRun` resources using `varFiles`, just as you define variables in reusable variable files in Ansible, then reference it using `vars_files` in playbooks.
@@ -361,13 +377,32 @@ spec:
     name: provider-config-example
 ```
 
+### Passing Variables via ProviderConfig
+
+To support loading Ansible roles or playbooks at runtime, the provider also allows users to manage their Ansible contents by specifiying some native Ansible environment variables to customize Ansible default behavior. Since such configuration have the global impact across all Ansible runs, this is done by passing variables in ProviderConfig.
+
+Here is an example:
+
+```yaml
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: provider-config-example
+spec:
+  vars:
+    # Specify the path where the Ansible roles are located
+    ANSIBLE_ROLE_PATH: /path/to/roles
+    # Specify the path where the Ansible collections are located
+    ANSIBLE_COLLECTION_PATH: /path/to/collections
+```
+
 ## AnsibleRun Lifecycle
 
-This section discusses how Ansible provider maps Ansible run to Crossplane managed resource lifecycle, that is a resource management centric lifecycle. Before that, let's understand how Crossplane manages resource.
+This section discusses how Ansible provider maps Ansible run to Crossplane resource management lifecycle, that is a resource management centric lifecycle. Before that, let's understand how Crossplane manages resource.
 
-### Managed Resource Lifecycle
+### Resource Management Lifecycle
 
-In Crosspane, Managed Resource Reconciler is a key component to drive the resource management by following Managed Resource Lifecycle. It exposes a set of lifecycle methods that allows developers who write providers to customize the actual behavior, typically CRUD operation, for a certain series of resources that they are interested in.
+In Crosspane, Managed Resource Reconciler is a key component to drive the resource management by following Resource Management Lifecycle. It exposes a set of lifecycle methods that allows developers who write providers to customize the actual behavior, typically CRUD operation, for a certain series of resources that they are interested in.
 
 When a managed resource is created, updated, or deleted, it will be detected by the reconciler, then go through the lifecycel to trigger the corresponding method at each stage. This is illustrated in the following diagram.
 
@@ -375,14 +410,20 @@ When a managed resource is created, updated, or deleted, it will be detected by 
 
 * It firstly calls `Connect()` and usually connects the target system where hosts the resources to be created.
 * It then calls `Observe()` and usually compares the desired state that is defined by the managed resource created locally and the actual state for the resource hosted on target system, or we call it the external resource as opposed to the managed resource. Also, `Observe()` is called periodically which is defined by a poll interval.
-* If the external resource does not exist, it will call `Create()` to delegate the actual resource creating job to provider. After then, it will requeue to wait for the next run of `Observe()` so that it can keep synchronizing the state between the external resource and the managed resource.
-* If the external resource does exists, but is not update to date, it will call `Update()` to delegate the actual resource updating job to provider. Once it's done successfully, it will requeue to wait for the next run of `Observe()` controlled by poll interval to discover any state difference between the external resource and the managed resource.
-* When the managed resource is deleted, it will call `Delete()` that allows provider to do clean up job for the external resource. After then, just as `Create()/Update()` does, it will requeue to wait for the next run of `Observe()` so that it can keep synchronizing the state between the external resource and the managed resource.
-* For all above CRUD methods, if there is an error occurred, it will report the error and requeue to wait for the next run of `Observe()` to give it another try. This is the typical Kubernetes reconciliation logic.
+* If the external resource does not exist, it will call `Create()` to delegate the actual resource creating job to provider. After then, it will requeue to wait for the next run of reconciliation so that it can keep synchronizing the state between the external resource and the managed resource.
+* If the external resource does exists, but is not update to date, it will call `Update()` to delegate the actual resource updating job to provider. Once it's done successfully, it will requeue to wait for the next run of reconciliation controlled by poll interval to discover any state difference between the external resource and the managed resource.
+* When the managed resource is deleted, it will call `Delete()` that allows provider to do clean up job for the external resource. After then, just as `Create()/Update()` does, it will requeue to wait for the next run of reconciliation so that it can keep synchronizing the state between the external resource and the managed resource.
+* For all above CRUD methods, if there is an error occurred, it will report the error and requeue to wait for the next run of reconciliation to give it another try.
 
-### Mapping Ansible Run to Managed Resource Lifecycle
+### Mapping Ansible Run to Resource Management Lifecycle
 
-In Ansible provider, `AnsibleRun` is the managed resource which is used to define the desired state on target system. It leverages the cooperation between Managed Resource Reconciler and Ansible provider to ensure the consistency between the desired state and the actual state. In order to support this, we need to define how `AnsibleRun` can be managed by Managed Resource Reconciler to follow the Managed Resource Lifecyle.
+The Crossplane resource management lifecycle is composed with a set of phases or methods. To implement a Crossplane provider, it usually involves writing code for each method that implements the behavior to support the corresponding phase. For Ansible provider, it delegates the action to Ansible binary to make changes to the resource on target system. This is the major difference compared to other Crossplane providers. For example, as opposed to providers that manage resources on public cloud, we no longer make direct API calls to the cloud using local binaries or golang libraries inside the provider, but instead we rely on the local Ansible binary to execute the Ansible contents retrieved from remote places to make these calls or changes. This can be illustrated by the following diagram.
+
+![](images/ansiblerun-to-manage-remote-resource.png)
+
+From the resource management perspective, in Ansible provider, `AnsibleRun` is a way to describe the desired state of the resource on target system. It depends on the cooperation among Managed Resource Reconciler, Ansible provider, and Ansible contents to ensure the consistency between the resource desired state and actual state.
+
+For the logic in Ansible contents, it is totally determined by developers who create the Ansible contents. This is not covered in this document. But for the cooperation between Ansible provider and Managed Resource Reconciler, this is deterministic and will be discussed in the following sections. You will see how we map Ansible run to a sub-set of the phases defined by Crossplane Resource Management Lifecyle to support the resource management use case.
 
 ### Preparing Ansible Contents
 
@@ -397,27 +438,37 @@ Once Ansible contents are available, we can start the Ansible run. Ansible provi
 
 #### Policy ObserveAndDelete
 
-This is the default policy and probably the most commonly used policy to manage Ansible run. When this policy is applied, the provider uses `Observe()` to handle the case when the managed resource `AnsibleRun` is present, and uses `Delete()` to handle the case when the resource is absent. Both `Observe()` and `Delete()` will call the same set of Ansible contents.
+This is the default policy and probably the most commonly used policy to manage Ansible run. When this policy is applied, the provider uses `Observe()` to handle the case when the managed resource `AnsibleRun` is present, and uses `Delete()` to handle the case when the managed resource is absent. Both `Observe()` and `Delete()` will call the same set of Ansible contents.
 
 ![](images/ansible-run-policy-1.png)
 
-Here is an example to run an Ansible role using ObserveAndDelete policy:
+Here is an example to run an Ansible role using ObserveAndDelete policy to provision an OpenShift cluster remotely:
 
 ```yaml
 apiVersion: ansible.crossplane.io/v1alpha1
 kind: AnsibleRun
 metadata:
-  name: remote-example
+  name: openshift-cluster
   annotation:
     ansible.crossplane.io/runPolicy: ObserveAndDelete
 spec:
   forProvider:
-    role: sample_namespace.sample_role
+    role: sample_namespace.openshift_cluster
+    vars:
+      ocpVersion: "4.8.27"
+      platform: "x"
+      size: "large"
   providerConfigRef:
     name: provider-config-example
 ```
 
-In order to differentiate the presence or absence of the `AnsibleRun` resource, a special variable is sent to Ansible when the Ansible contents start to run:
+In this case, we define the desired state as source of truth for our OpenShift cluster using `spec.forProvider.vars`. For example, it specifies the OpenShift version, the platform, and the size for the cluster to be provisioned. It relies on the Ansible role `sample_namespace.openshift_cluster` to provision the cluster for us.
+
+The annotation used to specify the policy information is not part of the desired state or source of truth. It is really just a small chunk of metadata that instructs the Ansible provider how to trigger the Ansible role.
+
+When user creates the `AnsibleRun` resource, it means they claim to request the cluster. This will trigger the Ansible role in `Observe()`. When user deletes the `AnsibleRun` resource, it means they claim to drop the cluster. This will trigger the same Ansible role in `Delete()` to clean the cluster.
+
+In order to differentiate the presence or absence of `AnsibleRun`, a special variable will be sent to the Ansible role when it starts to run:
 
 ```
 ansible_provider_meta.managed_resource.state = absence|presence
@@ -463,6 +514,14 @@ In order to differentiate the presence or absence of the `AnsibleRun` resource, 
 
 Note, because Ansible modules that do not support check mode report nothing and do nothing, if you use this policy in such a case, `Observe()` will not detect any change. As a result, neither `Create()` nor `Update()` will get triggered.
 
+#### Why Using Annotation
+
+The policy annotation is not mandatory. If no policy annotation is specified, the provider will take `ObserveAndDelete` as the default policy which does not rely on check mode. The reasons that using annotation to specify the policy are that:
+
+* To avoid the confusion for people who mix it with the desired state defined in `spec` field. It is just a small chunk of metadata that instructs the Ansible provider how to trigger the Ansible roles or playbooks.
+
+* To avoid the overhead of API version upgrade if we change the behavior later per user feedback. The idea of policy is still at early stage and may be subject to change. Instead of using annotation, if we add that into `spec` field, we will have to deal with API version upgrade to support backward compatibility or migration for existing provider users.
+
 ### Best Practices to Write Ansible Contents
 
 Althouth there is no significant hard requirement in general for Ansible contents to work with Ansible provider, there are still some best practices for developers who maintain Ansible conents to take as reference. These are also guidelines for people to write general Ansible roles or playbooks effectively, which is not Ansible provider specific.
@@ -471,7 +530,7 @@ Althouth there is no significant hard requirement in general for Ansible content
 
 It is always a best practice to write Ansible roles or playbooks in an idempotent way. As an example, if a playbook consists of 5 steps, and the system deviates in step 3 from the desired state, then only this particular step needs to be applied. By its nature, Ansible tasks will only change the system if there is something has to do.
 
-From Ansible provider perspective, this is required because the same Ansible contents will be run many times in Managed Resource Lifecycle.
+From Ansible provider perspective, this is required because the same Ansible contents will be run many times in Resource Management Lifecycle.
 
 #### Running Roles or Playbooks Per State
 
@@ -506,3 +565,16 @@ As you can see, Ansible operator can also be used to drive Ansible run in a Kube
 * Ansible operator requires you to bundle Ansible contents into a container image then run as a Kubernetes application. If you have ten Ansible roles, you may need to build multiple container images where each image bundled with one or more Ansible roles that handles different Kubernetes resources. Ansible provider works differently. Instead of bundling the controller with Ansible contents inside the same container image, the provider works as a standalone Kubernetes application and runs separately. This allows people to have the provider call Ansible contents remotely from any place such as Ansible Galaxy, Automation Hub, or GitHub repository.
 
 * Ansible operator is usually implemented as an in-cluster Kubernetes application where the resources or workloads it operates on are co-located within the same cluster. On the contrary, Ansible provider is designed to manage resources remotely. It usually runs itself in a Kubernetes cluster, then operates on the resources or workloads on remote systems. Of course, it can also handle in-cluster resources or workloads if your Ansible contents manage Kubernetes resources using Ansible k8s module.
+
+## Appendix: Feature List
+
+The following list includes the major features that are discussed in this document with their current status: implemented or not implemented.
+
+- ✅ Inline Playbook
+- ✅ Remote Role
+- ❎ Remote Playbook
+- ✅ Credentials
+- ✅ Requirements
+- ✅ Variables
+- ❎ Ansible Run Policy: ObserveAndDelete
+- ❎ Ansible Run Policy: CheckWhenObserve

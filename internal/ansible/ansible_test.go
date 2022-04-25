@@ -108,8 +108,8 @@ func TestInit(t *testing.T) {
 			secondCr := v1alpha1.AnsibleRun{ObjectMeta: objectMeta}
 			secondCr.Spec.ForProvider.Playbook = tc.playbook
 			secondCr.Spec.ForProvider.Role = tc.role
-
-			testRunner, err := ps.Init(ctx, &secondCr)
+			pc := v1alpha1.ProviderConfig{}
+			testRunner, err := ps.Init(ctx, &secondCr, &pc)
 			if err != nil {
 				t.Fatalf("Error occurred unexpectedly: %v", err)
 			}

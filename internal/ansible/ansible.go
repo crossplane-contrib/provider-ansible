@@ -181,17 +181,17 @@ func (p Parameters) galaxyInstall() error {
 }
 
 // Init initializes a new runner from parameters
-func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun) (*Runner, error) {
+func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*Runner, error) {
 	if err := p.galaxyInstall(); err != nil {
 		return nil, err
 	}
 
-	vars, err := runnerutil.ConvertKVVarsToMap(cr.Spec.ForProvider.Vars)
+	behaviorVars, err := runnerutil.ConvertKVToMap(pc.Spec.Vars)
 	if err != nil {
 		return nil, err
 	}
 
-	addRolePlaybookPaths(p, vars, cr)
+	addRolePlaybookPaths(p, behaviorVars, cr)
 
 	if cr.Spec.ForProvider.Source == v1alpha1.ConfigurationSourceInline {
 		// For inline mode playbook is stored in the predefined playbookYml file
@@ -221,8 +221,9 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun) (*Runner,
 		withCmdFunc(cmdFunc),
 		// TODO add verbosity filed to the API, now it is ignored by (0) value
 		withAnsibleVerbosity(0),
-		withAnsibleGathering(vars["ANSIBLE_GATHERING"]),
-		withAnsibleHosts(vars["hosts"]),
+		withAnsibleGathering(behaviorVars["ANSIBLE_GATHERING"]),
+		// TODO hosts should be handled via configuration vars e.g: vars["hosts"]
+		withAnsibleHosts(""),
 	), nil
 }
 
@@ -250,7 +251,7 @@ func new(o ...runnerOption) *Runner {
 
 // addRolePlaybookPaths will add the full path based on absolute path of cloning dir
 // Func from operator SDK
-func addRolePlaybookPaths(p Parameters, vars map[string]string, cr *v1alpha1.AnsibleRun) {
+func addRolePlaybookPaths(p Parameters, behaviorVars map[string]string, cr *v1alpha1.AnsibleRun) {
 	if len(cr.Spec.ForProvider.Playbook) > 0 {
 		cr.Spec.ForProvider.Playbook = runnerutil.GetFullPath(p.WorkingDir, cr.Spec.ForProvider.Playbook)
 	}
@@ -259,10 +260,10 @@ func addRolePlaybookPaths(p Parameters, vars map[string]string, cr *v1alpha1.Ans
 		collectionsPath := p.CollectionsPath
 		rolesPath := p.RolesPath
 		switch {
-		case vars[AnsibleRolesPath] != "":
-			rolesPath = vars[AnsibleRolesPath]
-		case vars[AnsibleCollectionsPath] != "":
-			collectionsPath = vars[AnsibleCollectionsPath]
+		case behaviorVars[AnsibleRolesPath] != "":
+			rolesPath = behaviorVars[AnsibleRolesPath]
+		case behaviorVars[AnsibleCollectionsPath] != "":
+			collectionsPath = behaviorVars[AnsibleCollectionsPath]
 		}
 
 		possibleRolePaths := getPossibleRolePaths(p.WorkingDir, cr.Spec.ForProvider.Role, collectionsPath, rolesPath)

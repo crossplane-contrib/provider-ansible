@@ -59,11 +59,11 @@ func (e *ErrFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, e
 }
 
 type MockPs struct {
-	MockInit func(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error)
+	MockInit func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error)
 }
 
-func (ps MockPs) Init(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error) {
-	return ps.MockInit(ctx, cr)
+func (ps MockPs) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error) {
+	return ps.MockInit(ctx, cr, pc)
 }
 
 func TestConnect(t *testing.T) {
@@ -292,7 +292,9 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error) { return nil, errBoom },
+						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error) {
+							return nil, errBoom
+						},
 					}
 				},
 			},
@@ -318,7 +320,9 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error) { return nil, nil },
+						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error) {
+							return nil, nil
+						},
 					}
 				},
 			},

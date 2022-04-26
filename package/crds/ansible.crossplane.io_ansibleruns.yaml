@@ -85,7 +85,7 @@ spec:
                   vars:
                     description: Configuration variables.
                     items:
-                      description: A Var represents an Ansible configuration variable.
+                      description: A Var represents key/value variable.
                       properties:
                         key:
                           type: string

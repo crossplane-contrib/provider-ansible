@@ -31,6 +31,10 @@ type ProviderConfigSpec struct {
 	// It is expressed as inline yaml.
 	// +optional
 	Requirements *string `json:"requirements,omitempty"`
+
+	// Vars are used to to customize Ansible default behavior.
+	// +optional
+	Vars []Var `json:"vars,omitempty"`
 }
 
 // ProviderCredentials required to authenticate.

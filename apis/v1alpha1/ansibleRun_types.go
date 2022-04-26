@@ -32,7 +32,7 @@ const (
 	ConfigurationSourceInline ConfigurationSource = "Inline"
 )
 
-// A Var represents an Ansible configuration variable.
+// A Var represents key/value variable.
 type Var struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`

@@ -61,7 +61,7 @@ const (
 )
 
 type params interface {
-	Init(ctx context.Context, cr *v1alpha1.AnsibleRun) (*ansible.Runner, error)
+	Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error)
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
@@ -199,7 +199,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 	ps := c.ansible(dir)
 
-	r, err := ps.Init(ctx, cr)
+	r, err := ps.Init(ctx, cr, pc)
 	if err != nil {
 		return nil, errors.Wrap(err, errInit)
 	}

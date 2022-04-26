@@ -55,8 +55,8 @@ func GetFullPath(workingDir, path string) string {
 	return filepath.Join(workingDir, path)
 }
 
-// ConvertKVVarsToMap converts {"key":"testKey", "value":"testValue"} to {"testKey":"testValue"}
-func ConvertKVVarsToMap(values []v1alpha1.Var) (map[string]string, error) {
+// ConvertKVToMap converts {"key":"testKey", "value":"testValue"} to {"testKey":"testValue"}
+func ConvertKVToMap(values []v1alpha1.Var) (map[string]string, error) {
 	result := make(map[string]string, len(values))
 	for _, value := range values {
 		data, err := json.Marshal(value)

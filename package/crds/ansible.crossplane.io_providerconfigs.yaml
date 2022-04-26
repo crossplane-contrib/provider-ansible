@@ -109,6 +109,20 @@ spec:
                 description: Requirements manage the necessary dependencies to run
                   ansible collection. It is expressed as inline yaml.
                 type: string
+              vars:
+                description: Vars are used to to customize Ansible default behavior.
+                items:
+                  description: A Var represents key/value variable.
+                  properties:
+                    key:
+                      type: string
+                    value:
+                      type: string
+                  required:
+                  - key
+                  - value
+                  type: object
+                type: array
             required:
             - credentials
             type: object

@@ -318,6 +318,37 @@ func TestConnect(t *testing.T) {
 			},
 			want: errors.Wrap(errBoom, errInit),
 		},
+		"AnsibleGalaxyError": {
+			reason: "We should return any error encountered while installing ansible requirements",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil),
+				},
+				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
+				ansible: func(_ string) params {
+					return MockPs{
+						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error) {
+							return nil, nil
+						},
+						MockGalaxyInstall: func() error {
+							return errBoom
+						},
+					}
+				},
+			},
+			args: args{
+				mg: &v1alpha1.AnsibleRun{
+					ObjectMeta: metav1.ObjectMeta{UID: uid},
+					Spec: v1alpha1.AnsibleRunSpec{
+						ResourceSpec: xpv1.ResourceSpec{
+							ProviderConfigReference: &xpv1.Reference{},
+						},
+					},
+				},
+			},
+			want: errBoom,
+		},
 		"Success": {
 			reason: "We should not return an error when we successfully 'connect' to Ansible",
 			fields: fields{

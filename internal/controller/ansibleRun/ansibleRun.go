@@ -62,6 +62,7 @@ const (
 
 type params interface {
 	Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error)
+	GalaxyInstall() error
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
@@ -74,6 +75,15 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, ansible
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 
+	galaxyBinary, err := galaxyutil.GalaxyBinary()
+	if err != nil {
+		return err
+	}
+	runnerBinary, err := runnerutil.RunnerBinary()
+	if err != nil {
+		return err
+	}
+
 	c := &connector{
 		kube:  mgr.GetClient(),
 		usage: resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
@@ -81,6 +91,8 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, ansible
 		ansible: func(dir string) params {
 			return ansible.Parameters{
 				WorkingDir:      dir,
+				GalaxyBinary:    galaxyBinary,
+				RunnerBinary:    runnerBinary,
 				CollectionsPath: ansibleCollectionsPath,
 				RolesPath:       ansibleRolesPath,
 			}
@@ -198,7 +210,10 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	}
 
 	ps := c.ansible(dir)
-
+	// install ansible requirements using ansible-galaxy
+	if err := ps.GalaxyInstall(); err != nil {
+		return nil, err
+	}
 	r, err := ps.Init(ctx, cr, pc)
 	if err != nil {
 		return nil, errors.Wrap(err, errInit)

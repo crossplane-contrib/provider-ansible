@@ -36,8 +36,12 @@ const (
 	AnsibleCollectionsPath = "ANSIBLE_COLLECTION_PATH"
 )
 
-// Parameters are minimal needed Parameters to initializes ansible-runner command
+// Parameters are minimal needed Parameters to initializes ansible command(s)
 type Parameters struct {
+	// ansible-galaxy binary path.
+	GalaxyBinary string
+	// ansible-runner binary path.
+	RunnerBinary string
 	// Dir in which to execute the ansible-runner binary.
 	WorkingDir      string
 	CollectionsPath string
@@ -85,12 +89,7 @@ func withAnsibleHosts(hosts string) runnerOption {
 type cmdFuncType func(gathering string, hosts string, verbosity int) *exec.Cmd
 
 // playbookCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L75-L90
-func playbookCmdFunc(path string) (cmdFuncType, error) {
-	runnerBinary, err := runnerutil.RunnerBinary()
-	if err != nil {
-		return nil, err
-	}
-
+func (p Parameters) playbookCmdFunc(path string) (cmdFuncType, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -109,17 +108,13 @@ func playbookCmdFunc(path string) (cmdFuncType, error) {
 		}
 		// gosec is disabled here because of G204. We should pay attention that user can't
 		// make command injection via command argument
-		return exec.Command(runnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+		return exec.Command(p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
 	}, nil
 }
 
 // roleCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L92-L118
-func roleCmdFunc(path string) (cmdFuncType, error) {
+func (p Parameters) roleCmdFunc(path string) (cmdFuncType, error) {
 	rolePath, roleName := filepath.Split(path)
-	runnerBinary, err := runnerutil.RunnerBinary()
-	if err != nil {
-		return nil, err
-	}
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -148,17 +143,12 @@ func roleCmdFunc(path string) (cmdFuncType, error) {
 
 		// gosec is disabled here because of G204. We should pay attention that user can't
 		// make command injection via command argument
-		return exec.Command(runnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+		return exec.Command(p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
 	}, nil
 }
 
-// galaxyInstall Install non-exists collections with ansible-galaxy cli
-func (p Parameters) galaxyInstall() error {
-	galaxyBinary, err := galaxyutil.GalaxyBinary()
-	if err != nil {
-		return err
-	}
-
+// GalaxyInstall Install non-exists collections with ansible-galaxy cli
+func (p Parameters) GalaxyInstall() error {
 	requirementsFilePath := runnerutil.GetFullPath(p.WorkingDir, galaxyutil.RequirementsFile)
 
 	cmdArgs := []string{"collection", "install"}
@@ -171,7 +161,7 @@ func (p Parameters) galaxyInstall() error {
 
 	// gosec is disabled here because of G204. We should pay attention that user can't
 	// make command injection via command argument
-	dc := exec.Command(galaxyBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+	dc := exec.Command(p.GalaxyBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
 
 	out, err := dc.CombinedOutput()
 	if err != nil {
@@ -182,10 +172,6 @@ func (p Parameters) galaxyInstall() error {
 
 // Init initializes a new runner from parameters
 func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*Runner, error) {
-	if err := p.galaxyInstall(); err != nil {
-		return nil, err
-	}
-
 	behaviorVars, err := runnerutil.ConvertKVToMap(pc.Spec.Vars)
 	if err != nil {
 		return nil, err
@@ -207,12 +193,12 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alp
 	switch {
 	case cr.Spec.ForProvider.Playbook != "":
 		path = cr.Spec.ForProvider.Playbook
-		if cmdFunc, err = playbookCmdFunc(path); err != nil {
+		if cmdFunc, err = p.playbookCmdFunc(path); err != nil {
 			return nil, err
 		}
 	case cr.Spec.ForProvider.Role != "":
 		path = cr.Spec.ForProvider.Role
-		if cmdFunc, err = roleCmdFunc(path); err != nil {
+		if cmdFunc, err = p.roleCmdFunc(path); err != nil {
 			return nil, err
 		}
 	}

@@ -59,11 +59,16 @@ func (e *ErrFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, e
 }
 
 type MockPs struct {
-	MockInit func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error)
+	MockInit          func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error)
+	MockGalaxyInstall func() error
 }
 
 func (ps MockPs) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error) {
 	return ps.MockInit(ctx, cr, pc)
+}
+
+func (ps MockPs) GalaxyInstall() error {
+	return ps.MockGalaxyInstall()
 }
 
 func TestConnect(t *testing.T) {
@@ -283,7 +288,7 @@ func TestConnect(t *testing.T) {
 			want: errors.Wrap(errBoom, errWriteAnsibleRun),
 		},
 		"AnsibleInitError": {
-			reason: "We should return any error encountered while initializing Playbook Client",
+			reason: "We should return any error encountered while initializing ansible-runner cli",
 			fields: fields{
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
@@ -294,6 +299,9 @@ func TestConnect(t *testing.T) {
 					return MockPs{
 						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error) {
 							return nil, errBoom
+						},
+						MockGalaxyInstall: func() error {
+							return nil
 						},
 					}
 				},
@@ -322,6 +330,9 @@ func TestConnect(t *testing.T) {
 					return MockPs{
 						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*ansible.Runner, error) {
 							return nil, nil
+						},
+						MockGalaxyInstall: func() error {
+							return nil
 						},
 					}
 				},

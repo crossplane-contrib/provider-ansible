@@ -52,36 +52,23 @@ spec:
                 description: AnsibleRunParameters are the configurable fields of a
                   AnsibleRun.
                 properties:
-                  module:
-                    description: The configuration of this AnsibleRun; i.e. the configuration
-                      containing its playbook(s)/Role(s) files. When the AnsibleRun's
-                      Provider source is 'Remote' (the default) this can be any address
-                      supported by Ansible.Builtin.git, TODO support other remotes
-                      https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html
-                      When the AnsibleRun's source is 'Inline' the content of a simple
-                      playbook.yml file may be written inline.
+                  playbookInline:
+                    description: The inline configuration of this AnsibleRun; the
+                      content of a simple playbook.yml file may be written inline.
+                      This field is mutually exclusive with the “role” field.
                     type: string
-                  playbook:
-                    description: This is the playbook name. This playbook is expected
-                      to be simply a way to call roles. This field is mutually exclusive
-                      with the “role” field. For remote source, the playbook is expected
-                      to be in the remote project directory. this filed has non effect
-                      on inline mode
-                    type: string
-                  role:
-                    description: 'Specifies a role to be executed. This field is mutually
-                      exclusive with the “playbook” field. For remote source This
-                      field can be: - a relative path within the project working directory
-                      - a relative path within one of the directories specified by
-                      ANSIBLE_ROLES_PATH environment variable or ansible-roles-path
-                      flag. this filed has non effect on inline mode'
-                    type: string
-                  source:
-                    description: Source of configuration of this AnsibleRun.
-                    enum:
-                    - Remote
-                    - Inline
-                    type: string
+                  playbooks:
+                    description: The remote configuration of this AnsibleRun; the
+                      content can be retrieved from Ansible Galaxy as community contents
+                    items:
+                      type: string
+                    type: array
+                  roles:
+                    description: The remote configuration of this AnsibleRun; the
+                      content can be retrieved from Ansible Galaxy as community contents
+                    items:
+                      type: string
+                    type: array
                   vars:
                     description: Configuration variables.
                     items:
@@ -96,9 +83,6 @@ spec:
                       - value
                       type: object
                     type: array
-                required:
-                - module
-                - source
                 type: object
               providerConfigRef:
                 default:

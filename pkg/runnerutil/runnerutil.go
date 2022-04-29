@@ -17,13 +17,10 @@ limitations under the License.
 package runnerutil
 
 import (
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/crossplane/provider-ansible/apis/v1alpha1"
 )
 
 const (
@@ -55,17 +52,11 @@ func GetFullPath(workingDir, path string) string {
 	return filepath.Join(workingDir, path)
 }
 
-// ConvertKVToMap converts {"key":"testKey", "value":"testValue"} to {"testKey":"testValue"}
-func ConvertKVToMap(values []v1alpha1.Var) (map[string]string, error) {
-	result := make(map[string]string, len(values))
-	for _, value := range values {
-		data, err := json.Marshal(value)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(data, &result); err != nil {
-			return nil, err
-		}
+// ConvertMapToSlice converts {"testKey1":"testValue1","testKey2":"testValue2"} to {"testKey1=testValue1","testKey2=testValue2"}
+func ConvertMapToSlice(values map[string]string) []string {
+	result := []string{}
+	for k, v := range values {
+		result = append(result, fmt.Sprintf("%s=%s", k, v))
 	}
-	return result, nil
+	return result
 }

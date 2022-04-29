@@ -18,15 +18,17 @@ package ansible
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
+	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/provider-ansible/apis/v1alpha1"
 	"github.com/crossplane/provider-ansible/pkg/galaxyutil"
 	"github.com/crossplane/provider-ansible/pkg/runnerutil"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -36,16 +38,58 @@ const (
 	AnsibleCollectionsPath = "ANSIBLE_COLLECTION_PATH"
 )
 
+const (
+	// AnnotationKeyPolicyRun is the name of an annotation which instructs
+	// the provider how to run the corresponding Ansible contents
+	AnnotationKeyPolicyRun = "ansible.crossplane.io/runPolicy"
+)
+
 // Parameters are minimal needed Parameters to initializes ansible command(s)
 type Parameters struct {
 	// ansible-galaxy binary path.
 	GalaxyBinary string
 	// ansible-runner binary path.
 	RunnerBinary string
-	// Dir in which to execute the ansible-runner binary.
-	WorkingDir      string
+	// WorkingDirPath in which to execute the ansible-runner binary.
+	WorkingDirPath  string
 	CollectionsPath string
-	RolesPath       string
+	// The source of this filed is either controller flag `--ansible-roles-path` or the env vars : `ANSIBLE_ROLES_PATH` , DEFAULT_ROLES_PATH`
+	RolesPath string
+}
+
+// RunPolicy represents the run policies of Ansible.
+type RunPolicy struct {
+	Name string
+}
+
+// newRunPolicy creates a run Policy with the specified Name.
+// supports the following run policies:
+// - ObserveAndDelete
+// - CheckWhenObserve
+// For more details about RunPolicy : https://github.com/multicloudlab/crossplane-provider-ansible/blob/main/docs/design.md#ansible-run-policy
+func newRunPolicy(rPolicy string) (*RunPolicy, error) {
+	switch rPolicy {
+	case "", "ObserveAndDelete":
+		if rPolicy == "" {
+			rPolicy = "ObserveAndDelete"
+		}
+	case "CheckWhenObserve":
+	default:
+		return nil, fmt.Errorf("run policy %q not supported", rPolicy)
+	}
+	return &RunPolicy{
+		Name: rPolicy,
+	}, nil
+}
+
+// GetPolicyRun returns the ansible run policy annotation value on the resource.
+func GetPolicyRun(o metav1.Object) string {
+	return o.GetAnnotations()[AnnotationKeyPolicyRun]
+}
+
+// SetPolicyRun sets the ansible run policy annotation of the resource.
+func SetPolicyRun(o metav1.Object, name string) {
+	meta.AddAnnotations(o, map[string]string{AnnotationKeyPolicyRun: name})
 }
 
 // A runnerOption configures a Runner.
@@ -65,38 +109,40 @@ func withCmdFunc(cmdFunc cmdFuncType) runnerOption {
 	}
 }
 
-// withAnsibleVerbosity set the ansible-runner verbosity.
+// withAnsibleVerbosity set the runner verbosity.
 func withAnsibleVerbosity(verbosity int) runnerOption {
 	return func(r *Runner) {
 		r.ansibleVerbosity = verbosity
 	}
 }
 
-// withAnsibleGathering set the ansible-runner default policy of fact gathering.
+// withAnsibleGathering set the runner default policy of fact gathering.
 func withAnsibleGathering(gathering string) runnerOption {
 	return func(r *Runner) {
 		r.ansibleGathering = gathering
 	}
 }
 
-// withAnsibleHosts set the ansible-runner hosts to execute against.
+// withAnsibleHosts set the runner hosts to execute against.
 func withAnsibleHosts(hosts string) runnerOption {
 	return func(r *Runner) {
 		r.ansibleHosts = hosts
 	}
 }
 
+// withAnsibleRunPolicy set the runner Policy to execute against.
+func withAnsibleRunPolicy(p *RunPolicy) runnerOption {
+	return func(r *Runner) {
+		r.AnsibleRunPolicy = p
+	}
+}
+
 type cmdFuncType func(gathering string, hosts string, verbosity int) *exec.Cmd
 
 // playbookCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L75-L90
-func (p Parameters) playbookCmdFunc(path string) (cmdFuncType, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-
+func (p Parameters) playbookCmdFunc(ctx context.Context, path string) cmdFuncType {
 	return func(_ string, hosts string, verbosity int) *exec.Cmd {
-		cmdArgs := []string{"run", wd}
+		cmdArgs := []string{"run", p.WorkingDirPath}
 		cmdOptions := []string{
 			"-p", path,
 			"--hosts", hosts,
@@ -108,12 +154,12 @@ func (p Parameters) playbookCmdFunc(path string) (cmdFuncType, error) {
 		}
 		// gosec is disabled here because of G204. We should pay attention that user can't
 		// make command injection via command argument
-		return exec.Command(p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
-	}, nil
+		return exec.CommandContext(ctx, p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+	}
 }
 
 // roleCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L92-L118
-func (p Parameters) roleCmdFunc(path string) (cmdFuncType, error) {
+func (p Parameters) roleCmdFunc(ctx context.Context, path string) (cmdFuncType, error) {
 	rolePath, roleName := filepath.Split(path)
 
 	wd, err := os.Getwd()
@@ -143,17 +189,34 @@ func (p Parameters) roleCmdFunc(path string) (cmdFuncType, error) {
 
 		// gosec is disabled here because of G204. We should pay attention that user can't
 		// make command injection via command argument
-		return exec.Command(p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+		return exec.CommandContext(ctx, p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
 	}, nil
 }
 
-// GalaxyInstall Install non-exists collections with ansible-galaxy cli
-func (p Parameters) GalaxyInstall() error {
-	requirementsFilePath := runnerutil.GetFullPath(p.WorkingDir, galaxyutil.RequirementsFile)
-
-	cmdArgs := []string{"collection", "install"}
-	cmdOptions := []string{
-		"--requirements-file", requirementsFilePath,
+// GalaxyInstall Install non-exists collections/roles with ansible-galaxy cli
+func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]string, isCollectionRequirements, isRoleRequirements bool) error {
+	requirementsFilePath := runnerutil.GetFullPath(p.WorkingDirPath, galaxyutil.RequirementsFile)
+	var cmdArgs []string
+	var cmdOptions []string
+	if isCollectionRequirements {
+		cmdArgs = []string{"collection", "install"}
+		cmdOptions = []string{
+			"--requirements-file", requirementsFilePath,
+		}
+	} else if isRoleRequirements {
+		cmdArgs = []string{"role", "install"}
+		cmdOptions = []string{
+			"--role-file", requirementsFilePath,
+		}
+		/* By default, Ansible downloads roles to the first writable directory in the default list of paths:
+		   ~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles
+		   this can be override by behaviorVars[AnsibleRolesPath] or p.RolesPath
+		*/
+		if behaviorVars[AnsibleRolesPath] != "" {
+			cmdOptions = append(cmdOptions, []string{"--roles-path", behaviorVars[AnsibleRolesPath]}...)
+		} else if p.RolesPath != "" {
+			cmdOptions = append(cmdOptions, []string{"--roles-path", p.RolesPath}...)
+		}
 	}
 
 	// ansible-galaxy is by default verbose
@@ -161,66 +224,61 @@ func (p Parameters) GalaxyInstall() error {
 
 	// gosec is disabled here because of G204. We should pay attention that user can't
 	// make command injection via command argument
-	dc := exec.Command(p.GalaxyBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+	dc := exec.CommandContext(ctx, p.GalaxyBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
 
 	out, err := dc.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to install galaxy collections: %v: %v", string(out), err)
+		return fmt.Errorf("failed to install galaxy collections/roles: %v: %v", string(out), err)
 	}
 	return nil
 }
 
 // Init initializes a new runner from parameters
-func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig) (*Runner, error) {
-	behaviorVars, err := runnerutil.ConvertKVToMap(pc.Spec.Vars)
-	if err != nil {
-		return nil, err
-	}
-
-	addRolePlaybookPaths(p, behaviorVars, cr)
-
-	if cr.Spec.ForProvider.Source == v1alpha1.ConfigurationSourceInline {
-		// For inline mode playbook is stored in the predefined playbookYml file
-		// override user input if exists
-		cr.Spec.ForProvider.Playbook = runnerutil.PlaybookYml
-		// TODO handle ansible roles inline mode
-		cr.Spec.ForProvider.Role = ""
-	}
-
+func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*Runner, error) {
 	var cmdFunc cmdFuncType
+	var err error
 	var path string
 
 	switch {
-	case cr.Spec.ForProvider.Playbook != "":
-		path = cr.Spec.ForProvider.Playbook
-		if cmdFunc, err = p.playbookCmdFunc(path); err != nil {
-			return nil, err
-		}
-	case cr.Spec.ForProvider.Role != "":
-		path = cr.Spec.ForProvider.Role
-		if cmdFunc, err = p.roleCmdFunc(path); err != nil {
+	case cr.Spec.ForProvider.PlaybookInline == nil && len(cr.Spec.ForProvider.Roles) == 0:
+		return nil, errors.New("at least a Playbook or Role should be provided")
+	case cr.Spec.ForProvider.PlaybookInline != nil && len(cr.Spec.ForProvider.Roles) != 0:
+		return nil, errors.New("cannot execute Playbook(s) and Role(s) at the same time, please respect Mutual Exclusion")
+	case cr.Spec.ForProvider.PlaybookInline != nil:
+		// For inline mode playbook is stored in the predefined playbookYml file
+		path = runnerutil.PlaybookYml
+		cmdFunc = p.playbookCmdFunc(ctx, path)
+	case len(cr.Spec.ForProvider.Roles) != 0:
+		path := addRolePath(p, behaviorVars)
+		if cmdFunc, err = p.roleCmdFunc(ctx, path); err != nil {
 			return nil, err
 		}
 	}
 
-	return new(withPath(path),
+	rPolicy, err := newRunPolicy(GetPolicyRun(cr))
+	if err != nil {
+		return nil, err
+	}
+	return new(withPath(p.WorkingDirPath),
 		withCmdFunc(cmdFunc),
 		// TODO add verbosity filed to the API, now it is ignored by (0) value
 		withAnsibleVerbosity(0),
 		withAnsibleGathering(behaviorVars["ANSIBLE_GATHERING"]),
 		// TODO hosts should be handled via configuration vars e.g: vars["hosts"]
 		withAnsibleHosts(""),
+		withAnsibleRunPolicy(rPolicy),
 	), nil
 }
 
 // Runner struct
 type Runner struct {
-	Path             string // path on disk to a playbook or role depending on what cmdFunc expects
-	Vars             map[string]interface{}
+	Path             string // absolute path on disk to a playbook or role depending on what cmdFunc expects
+	behaviorVars     map[string]string
 	cmdFunc          cmdFuncType // returns a Cmd that runs ansible-runner
 	ansibleVerbosity int
 	ansibleGathering string
 	ansibleHosts     string
+	AnsibleRunPolicy *RunPolicy
 }
 
 // new returns a runner that will be used as ansible-runner client
@@ -235,65 +293,39 @@ func new(o ...runnerOption) *Runner {
 	return r
 }
 
-// addRolePlaybookPaths will add the full path based on absolute path of cloning dir
-// Func from operator SDK
-func addRolePlaybookPaths(p Parameters, behaviorVars map[string]string, cr *v1alpha1.AnsibleRun) {
-	if len(cr.Spec.ForProvider.Playbook) > 0 {
-		cr.Spec.ForProvider.Playbook = runnerutil.GetFullPath(p.WorkingDir, cr.Spec.ForProvider.Playbook)
+// Run execute the appropriate cmdFunc
+func (r *Runner) Run() (string, error) {
+	dc := r.cmdFunc(r.ansibleGathering, r.ansibleHosts, r.ansibleVerbosity)
+	behaviorVarsSlice := runnerutil.ConvertMapToSlice(r.behaviorVars)
+	// Append current environment since setting dc.Env to anything other than nil overwrites current env
+	// Some behaviorVars are not assessed because they are actually passed to cmd as flag
+	dc.Env = append(dc.Env, os.Environ()...)
+	dc.Env = append(dc.Env, behaviorVarsSlice...)
+	output, err := dc.CombinedOutput()
+	if err != nil {
+		return string(output), err
 	}
-
-	if len(cr.Spec.ForProvider.Role) > 0 {
-		collectionsPath := p.CollectionsPath
-		rolesPath := p.RolesPath
-		switch {
-		case behaviorVars[AnsibleRolesPath] != "":
-			rolesPath = behaviorVars[AnsibleRolesPath]
-		case behaviorVars[AnsibleCollectionsPath] != "":
-			collectionsPath = behaviorVars[AnsibleCollectionsPath]
-		}
-
-		possibleRolePaths := getPossibleRolePaths(p.WorkingDir, cr.Spec.ForProvider.Role, collectionsPath, rolesPath)
-		for _, possiblePath := range possibleRolePaths {
-			if _, err := os.Stat(possiblePath); err == nil {
-				cr.Spec.ForProvider.Role = possiblePath
-				break
-			}
-		}
-	}
+	return string(output), nil
 }
 
-// getPossibleRolePaths returns list of possible absolute paths derived from a user provided value.
-func getPossibleRolePaths(workingDir, path, ansibleRolesPath, ansibleCollectionsPath string) []string {
-	possibleRolePaths := []string{}
-	if filepath.IsAbs(path) || len(path) == 0 {
-		return append(possibleRolePaths, path)
+// addRolePath will determines the role paths
+func addRolePath(p Parameters, behaviorVars map[string]string) string {
+	var rolesPath string
+	if behaviorVars[AnsibleRolesPath] != "" {
+		rolesPath = behaviorVars[AnsibleRolesPath]
+	} else if p.RolesPath != "" {
+		rolesPath = p.RolesPath
 	}
-	fqcn := strings.Split(path, ".")
-	// If fqcn is a valid fully qualified collection name, it is <namespace>.<collectionName>.<roleName>
-	if len(fqcn) == 3 {
-		if ansibleCollectionsPath == "" {
-			ansibleCollectionsPath = "/usr/share/ansible/collections"
-			home, err := os.UserHomeDir()
-			if err == nil {
-				homeCollections := filepath.Join(home, ".ansible/collections")
-				ansibleCollectionsPath = ansibleCollectionsPath + ":" + homeCollections
-			}
-		}
-		for _, possiblePathParent := range strings.Split(ansibleCollectionsPath, ":") {
-			possiblePath := filepath.Join(possiblePathParent, "ansible_collections", fqcn[0], fqcn[1], "roles", fqcn[2])
-			possibleRolePaths = append(possibleRolePaths, possiblePath)
-		}
-	}
+	return rolesPath
+}
 
-	// Check for the role where Ansible would. If it exists, use it.
-	if ansibleRolesPath != "" {
-		for _, possiblePathParent := range strings.Split(ansibleRolesPath, ":") {
-			// "roles" is optionally a part of the path. Check with, and without.
-			possibleRolePaths = append(possibleRolePaths, filepath.Join(possiblePathParent, path), filepath.Join(possiblePathParent, "roles", path))
-		}
+// AddFile from https://github.com/operator-framework/operator-sdk/blob/master/internal/ansible/runner/internal/inputdir/inputdir.go#L55-L63
+func (p Parameters) AddFile(path string, content []byte) error {
+	fullPath := filepath.Join(p.WorkingDirPath, path)
+	if err := os.WriteFile(fullPath, content, 0644); err != nil {
+		return err
 	}
-	// Roles can also live in the working directory.
-	return append(possibleRolePaths, runnerutil.GetFullPath(workingDir, filepath.Join("roles", path)))
+	return nil
 }
 
 // Changes parse 'ansible-playbook --check' results to determine whether there is a diff between
@@ -328,8 +360,9 @@ func getPossibleRolePaths(workingDir, path, ansibleRolesPath, ansibleCollections
 	return resourcesExists
 }*/
 
-// ParseResults play `ansible-playbook` then parse JSON stream results with check mode
-/*func (pbCmd *PbCmd) ParseResults(ctx context.Context, mg resource.Managed) (bool, bool, error) {
+// runWithCheckMode plays `ansible-runner` with check mode
+// then parse JSON stream results
+/*func (r *Runner) runWithCheckMode(ctx context.Context, mg resource.Managed) (bool, bool, error) {
 	// Enable the check flag
 	// Check don't make any changes; instead, try to predict some of the changes that may occur
 	pbCmd.Playbook.Options.Check = true

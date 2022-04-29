@@ -469,7 +469,9 @@ In this case, we define the desired state as source of truth for our OpenShift c
 
 The annotation used to specify the policy information is not part of the desired state or source of truth. It is really just a small chunk of metadata that instructs the Ansible provider how to trigger the Ansible role.
 
-When user creates the `AnsibleRun` resource, it means they claim to request the cluster. This will trigger the Ansible role in `Observe()`. When user deletes the `AnsibleRun` resource, it means they claim to drop the cluster. This will trigger the same Ansible role in `Delete()` to clean the cluster.
+When user creates the `AnsibleRun` resource, it means they claim to request the cluster. This will trigger the Ansible role in `Observe()`.
+When user edits the `AnsibleRun` resource, it means they claim to update the cluster. This will trigger the Ansible role in `Observe()`.
+When user deletes the `AnsibleRun` resource, it means they claim to drop the cluster. This will trigger the same Ansible role in `Delete()` to clean the cluster.
 
 In order to differentiate the presence or absence of `AnsibleRun`, a special variable will be sent to the Ansible role when it starts to run:
 

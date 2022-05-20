@@ -1,14 +1,15 @@
 apiVersion: ansible.crossplane.io/v1alpha1
 kind: AnsibleRun
 metadata:
+  annotations:
+    ansible.crossplane.io/runPolicy: ObserveAndDelete
   name: example
 spec:
   forProvider:
-    # PlaybookSet default to using a remote source - like playbookSet-remote.yaml.
+    # AnsibleRun default to using a remote source - like ansibleRun-remote.yaml.
     # For simple cases you can use an inline source to specify the content of
     # playbook.yaml as opaque, inline yaml.
-    source: Inline
-    module: |
+    playbookInline: |
       ---
       - hosts: localhost
         tasks:

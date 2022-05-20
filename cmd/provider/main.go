@@ -36,7 +36,7 @@ func main() {
 		app                    = kingpin.New(filepath.Base(os.Args[0]), "Template support for Crossplane.").DefaultEnvars()
 		debug                  = app.Flag("debug", "Run with debug logging.").Short('d').Bool()
 		ansibleCollectionsPath = app.Flag("ansible-collections-path", "Path where ansible collections are installed.").String()
-		ansibleRolesPath       = app.Flag("ansible-roles-path", "Path where role(s) exists.").String()
+		ansibleRolesPath       = app.Flag("ansible-roles-path", "Path where role(s) exists.").Envar("DEFAULT_ROLES_PATH").Envar("ANSIBLE_ROLES_PATH").String()
 		syncPeriod             = app.Flag("sync", "Controller manager sync period such as 300ms, 1.5h, or 2h45m").Short('s').Default("1h").Duration()
 		leaderElection         = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").OverrideDefaultFromEnvar("LEADER_ELECTION").Bool()
 	)

@@ -71,22 +71,15 @@ func prepareAnsibleContext(dir string) (string, error) {
 	return ansibleDir, nil
 }
 
-func TestInit(t *testing.T) {
-	validPlaybook := "playbook.yml"
-	validRole := "role.yml"
-
+func TestAnsibleRunPolicyInit(t *testing.T) {
 	testCases := []struct {
-		name     string
-		playbook string
-		role     string
+		policy string
 	}{
 		{
-			name:     "basic runner with playbook",
-			playbook: validPlaybook,
+			policy: "ObserveAndDelete",
 		},
 		{
-			name: "basic runner with role",
-			role: validRole,
+			policy: "CheckWhenObserve",
 		},
 	}
 
@@ -96,32 +89,35 @@ func TestInit(t *testing.T) {
 	defer os.RemoveAll(ansibleCtx)
 
 	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			firstCr := v1alpha1.AnsibleRun{ObjectMeta: objectMeta}
-			firstCr.Spec.ForProvider.Playbook = filepath.Join(ansibleCtx, tc.playbook)
-			firstCr.Spec.ForProvider.Role = filepath.Join(filepath.Join(ansibleCtx, "roles"), tc.role)
-
-			ps := Parameters{
-				WorkingDir: ansibleCtx,
+		t.Run(tc.policy, func(t *testing.T) {
+			objectMeta.Annotations = map[string]string{AnnotationKeyPolicyRun: tc.policy}
+			cr := v1alpha1.AnsibleRun{
+				ObjectMeta: objectMeta,
+				Spec: v1alpha1.AnsibleRunSpec{
+					ForProvider: v1alpha1.AnsibleRunParameters{
+						Roles: []string{"I'm Yaml!"},
+					},
+				},
 			}
 
-			secondCr := v1alpha1.AnsibleRun{ObjectMeta: objectMeta}
-			secondCr.Spec.ForProvider.Playbook = tc.playbook
-			secondCr.Spec.ForProvider.Role = tc.role
+			ps := Parameters{
+				WorkingDirPath: ansibleCtx,
+			}
+
 			pc := v1alpha1.ProviderConfig{}
-			testRunner, err := ps.Init(ctx, &secondCr, &pc)
+			testRunner, err := ps.Init(ctx, &cr, &pc, nil)
 			if err != nil {
 				t.Fatalf("Error occurred unexpectedly: %v", err)
 			}
 
 			switch {
-			case tc.playbook != "":
-				if testRunner.Path != firstCr.Spec.ForProvider.Playbook {
-					t.Fatalf("Unexpected path %v expected path %v", testRunner.Path, firstCr.Spec.ForProvider.Playbook)
+			case tc.policy == "ObserveAndDelete":
+				if testRunner.AnsibleRunPolicy.Name != "ObserveAndDelete" {
+					t.Fatalf("Unexpected policy %v expected %v", testRunner.AnsibleRunPolicy.Name, "ObserveAndDelete")
 				}
-			case tc.role != "":
-				if testRunner.Path != firstCr.Spec.ForProvider.Role {
-					t.Fatalf("Unexpected path %v expected path %v", testRunner.Path, firstCr.Spec.ForProvider.Role)
+			case tc.policy == "CheckWhenObserve":
+				if testRunner.AnsibleRunPolicy.Name != "CheckWhenObserve" {
+					t.Fatalf("Unexpected policy %v expected %v", testRunner.AnsibleRunPolicy.Name, "CheckWhenObserve")
 				}
 			}
 

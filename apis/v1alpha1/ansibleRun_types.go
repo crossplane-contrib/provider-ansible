@@ -40,30 +40,18 @@ type Var struct {
 
 // AnsibleRunParameters are the configurable fields of a AnsibleRun.
 type AnsibleRunParameters struct {
-	// The configuration of this AnsibleRun; i.e. the configuration containing its playbook(s)/Role(s)
-	// files. When the AnsibleRun's Provider source is 'Remote' (the default) this can be
-	// any address supported by Ansible.Builtin.git,
-	// TODO support other remotes https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html
-	// When the AnsibleRun's source is 'Inline' the
-	// content of a simple playbook.yml file may be written inline.
-	Module string `json:"module"`
-
-	// Source of configuration of this AnsibleRun.
-	Source ConfigurationSource `json:"source"`
-
-	// This is the playbook name. This playbook is expected to be simply a way to call roles.
+	// The inline configuration of this AnsibleRun; the content of a simple playbook.yml file may be written inline.
 	// This field is mutually exclusive with the “role” field.
-	// For remote source, the playbook is expected to be in the remote project directory.
-	// this filed has non effect on inline mode
 	// +optional
-	Playbook string `json:"playbook,omitempty"`
+	PlaybookInline *string `json:"playbookInline"`
 
-	// Specifies a role to be executed. This field is mutually exclusive with the “playbook” field. For remote source This field can be:
-	// - a relative path within the project working directory
-	// - a relative path within one of the directories specified by ANSIBLE_ROLES_PATH environment variable or ansible-roles-path flag.
-	// this filed has non effect on inline mode
+	// The remote configuration of this AnsibleRun; the content can be retrieved from Ansible Galaxy as community contents
 	// +optional
-	Role string `json:"role,omitempty"`
+	Roles []string `json:"roles"`
+
+	// The remote configuration of this AnsibleRun; the content can be retrieved from Ansible Galaxy as community contents
+	// +optional
+	Playbooks []string `json:"playbooks"`
 
 	// Configuration variables.
 	// +optional

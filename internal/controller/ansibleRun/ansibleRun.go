@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 
+	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/event"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
@@ -35,7 +36,6 @@ import (
 	"github.com/crossplane/provider-ansible/pkg/runnerutil"
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
-	"gopkg.in/yaml.v2"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -74,6 +74,11 @@ type params interface {
 	Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error)
 	AddFile(path string, content []byte) error
 	GalaxyInstall(ctx context.Context, behaviorVars map[string]string, isRoleRequirements, isCollectionRequirements bool) error
+}
+
+type ansibleRunner interface {
+	Run() (string, error)
+	WriteExtraVar(extraVar map[string]interface{}) error
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
@@ -267,7 +272,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 }
 
 type external struct {
-	runner *ansible.Runner
+	runner *ansibleRunner
 	kube   client.Reader
 }
 
@@ -345,8 +350,24 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 		return errors.New(errNotAnsibleRun)
 	}
 
-	fmt.Printf("Deleting: %+v", cr)
+	cr.Status.SetConditions(xpv1.Deleting())
 
+	switch c.runner.AnsibleRunPolicy.Name {
+	case "ObserveAndDelete", "":
+		stateVar := map[string]string{"state": "absent"}
+		nestedMap := map[string]interface{}{cr.GetName(): stateVar}
+		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
+			return err
+		}
+		out, err := c.runner.Run()
+		if err != nil {
+			return errors.Wrap(err, out)
+		}
+	case "CheckWhenObserve":
+		// TODO
+	default:
+
+	}
 	return nil
 }
 
@@ -379,30 +400,9 @@ func (c *external) handleLastApplied(last, desired *v1alpha1.AnsibleRun) (manage
 	}
 
 	if !isUpToDate {
-		extraVarsPath := filepath.Join(c.runner.Path, "env/extravars")
-		contentVars := map[string]interface{}{}
-		data, err := os.ReadFile(extraVarsPath)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return managed.ExternalObservation{}, err
-			}
-		}
-		if len(data) != 0 {
-			if err := json.Unmarshal(data, &contentVars); err != nil {
-				return managed.ExternalObservation{}, err
-			}
-		}
-
 		stateVar := map[string]string{"state": "present"}
 		nestedMap := map[string]interface{}{desired.GetName(): stateVar}
-		contentVars["ansible_provider_meta"] = nestedMap
-		contentVarsB, err := json.Marshal(contentVars)
-		if err != nil {
-			return managed.ExternalObservation{}, nil
-		}
-		if err := os.WriteFile(extraVarsPath, contentVarsB, 0644); err != nil {
-			return managed.ExternalObservation{}, err
-		}
+		c.runner.WriteExtraVar(nestedMap)
 		out, err := c.runner.Run()
 		if err != nil {
 			return managed.ExternalObservation{}, errors.Wrap(err, out)

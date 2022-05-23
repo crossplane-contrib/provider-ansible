@@ -78,9 +78,9 @@ func (ps MockPs) AddFile(path string, content []byte) error {
 }
 
 type MockRunner struct {
-	MockRun           func() (string, error)
-	MockWriteExtraVar func(extraVar map[string]interface{}) error
-	AnsibleRunPolicy  *ansible.RunPolicy
+	MockRun              func() (string, error)
+	MockWriteExtraVar    func(extraVar map[string]interface{}) error
+	MockAnsibleRunPolicy func() *ansible.RunPolicy
 }
 
 func (r MockRunner) Run() (string, error) {
@@ -89,6 +89,10 @@ func (r MockRunner) Run() (string, error) {
 
 func (r MockRunner) WriteExtraVar(extraVar map[string]interface{}) error {
 	return r.MockWriteExtraVar(extraVar)
+}
+
+func (r MockRunner) GetAnsibleRunPolicy() *ansible.RunPolicy {
+	return r.MockAnsibleRunPolicy()
 }
 
 func TestConnect(t *testing.T) {
@@ -437,7 +441,7 @@ func TestObserve(t *testing.T) {
 
 	type fields struct {
 		kube   client.Client
-		runner *ansible.Runner
+		runner ansibleRunner
 	}
 
 	type args struct {
@@ -519,7 +523,7 @@ func TestDelete(t *testing.T) {
 
 	type fields struct {
 		kube   client.Client
-		runner *ansible.Runner
+		runner ansibleRunner
 	}
 
 	type args struct {
@@ -540,7 +544,7 @@ func TestDelete(t *testing.T) {
 			},
 			want: errors.New(errNotAnsibleRun),
 		},
-		"writeExtraVarError": {
+		"writeExtraVarErrorWithObserveAndDeletePolicy": {
 			reason: "We should return any error we encounter writing env variable env/extravars",
 			args: args{
 				mg: &v1alpha1.AnsibleRun{},
@@ -550,12 +554,58 @@ func TestDelete(t *testing.T) {
 					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
 						return errBoom
 					},
-					AnsibleRunPolicy: &ansible.RunPolicy{
-						Name: "ObserveAndDelete",
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
 					},
 				},
 			},
 			want: errBoom,
+		},
+		"RunErrorWithObserveAndDeletePolicy": {
+			reason: "We should return any error we encounter when running the runner",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return nil
+					},
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
+					},
+					MockRun: func() (string, error) {
+						return "", errBoom
+					},
+				},
+			},
+			want: errors.Wrap(errBoom, ""),
+		},
+		"SuccessfulDeleteWithObserveAndDeletePolicy": {
+			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return nil
+					},
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
+					},
+					MockRun: func() (string, error) {
+						return "", nil
+					},
+				},
+			},
+			want: nil,
 		},
 	}
 

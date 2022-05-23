@@ -36,6 +36,7 @@ import (
 	"github.com/crossplane/provider-ansible/pkg/runnerutil"
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
+	"gopkg.in/yaml.v2"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -77,6 +78,7 @@ type params interface {
 }
 
 type ansibleRunner interface {
+	GetAnsibleRunPolicy() *ansible.RunPolicy
 	Run() (string, error)
 	WriteExtraVar(extraVar map[string]interface{}) error
 }
@@ -272,7 +274,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 }
 
 type external struct {
-	runner *ansibleRunner
+	runner ansibleRunner
 	kube   client.Reader
 }
 
@@ -281,9 +283,9 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	if !ok {
 		return managed.ExternalObservation{}, errors.New(errNotAnsibleRun)
 	}
-	switch c.runner.AnsibleRunPolicy.Name {
+	switch c.runner.GetAnsibleRunPolicy().Name {
 	case "ObserveAndDelete", "":
-		if c.runner.AnsibleRunPolicy.Name == "" {
+		if c.runner.GetAnsibleRunPolicy().Name == "" {
 			ansible.SetPolicyRun(mg, "ObserveAndDelete")
 		}
 		if meta.WasDeleted(cr) {
@@ -352,7 +354,7 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 
 	cr.Status.SetConditions(xpv1.Deleting())
 
-	switch c.runner.AnsibleRunPolicy.Name {
+	switch c.runner.GetAnsibleRunPolicy().Name {
 	case "ObserveAndDelete", "":
 		stateVar := map[string]string{"state": "absent"}
 		nestedMap := map[string]interface{}{cr.GetName(): stateVar}
@@ -402,7 +404,9 @@ func (c *external) handleLastApplied(last, desired *v1alpha1.AnsibleRun) (manage
 	if !isUpToDate {
 		stateVar := map[string]string{"state": "present"}
 		nestedMap := map[string]interface{}{desired.GetName(): stateVar}
-		c.runner.WriteExtraVar(nestedMap)
+		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
+			return managed.ExternalObservation{}, err
+		}
 		out, err := c.runner.Run()
 		if err != nil {
 			return managed.ExternalObservation{}, errors.Wrap(err, out)

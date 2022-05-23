@@ -294,6 +294,11 @@ func new(o ...runnerOption) *Runner {
 	return r
 }
 
+// GetAnsibleRunPolicy to retrieve Ansible RunPolicy
+func (r *Runner) GetAnsibleRunPolicy() *RunPolicy {
+	return r.AnsibleRunPolicy
+}
+
 // Run execute the appropriate cmdFunc
 func (r *Runner) Run() (string, error) {
 	dc := r.cmdFunc(r.ansibleGathering, r.ansibleHosts, r.ansibleVerbosity)
@@ -330,8 +335,8 @@ func (p Parameters) AddFile(path string, content []byte) error {
 }
 
 // WriteExtraVar write extra var to env/extravars under working directory
-// it creates a non-existant env/extravars file
-func (r Runner) WriteExtraVar(extraVar map[string]interface{}) error {
+// it creates a non-existent env/extravars file
+func (r *Runner) WriteExtraVar(extraVar map[string]interface{}) error {
 	extraVarsPath := filepath.Join(r.Path, "env/extravars")
 	contentVars := map[string]interface{}{}
 	data, err := os.ReadFile(extraVarsPath)

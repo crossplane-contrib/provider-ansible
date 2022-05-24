@@ -77,6 +77,24 @@ func (ps MockPs) AddFile(path string, content []byte) error {
 	return ps.MockAddFile(path, content)
 }
 
+type MockRunner struct {
+	MockRun              func() (string, error)
+	MockWriteExtraVar    func(extraVar map[string]interface{}) error
+	MockAnsibleRunPolicy func() *ansible.RunPolicy
+}
+
+func (r MockRunner) Run() (string, error) {
+	return r.MockRun()
+}
+
+func (r MockRunner) WriteExtraVar(extraVar map[string]interface{}) error {
+	return r.MockWriteExtraVar(extraVar)
+}
+
+func (r MockRunner) GetAnsibleRunPolicy() *ansible.RunPolicy {
+	return r.MockAnsibleRunPolicy()
+}
+
 func TestConnect(t *testing.T) {
 	errBoom := errors.New("boom")
 	uid := types.UID("no-you-id")
@@ -423,7 +441,7 @@ func TestObserve(t *testing.T) {
 
 	type fields struct {
 		kube   client.Client
-		runner *ansible.Runner
+		runner ansibleRunner
 	}
 
 	type args struct {
@@ -495,6 +513,108 @@ func TestObserve(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want.o, got); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want, +got:\n%s\n", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestDelete(t *testing.T) {
+	errBoom := errors.New("boom")
+
+	type fields struct {
+		kube   client.Client
+		runner ansibleRunner
+	}
+
+	type args struct {
+		ctx context.Context
+		mg  resource.Managed
+	}
+
+	cases := map[string]struct {
+		reason string
+		fields fields
+		args   args
+		want   error
+	}{
+		"NotAnAnsibleRunError": {
+			reason: "We should return an error if the supplied managed resource is not an AnsibleRun",
+			args: args{
+				mg: nil,
+			},
+			want: errors.New(errNotAnsibleRun),
+		},
+		"writeExtraVarErrorWithObserveAndDeletePolicy": {
+			reason: "We should return any error we encounter writing env variable env/extravars",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return errBoom
+					},
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
+					},
+				},
+			},
+			want: errBoom,
+		},
+		"RunErrorWithObserveAndDeletePolicy": {
+			reason: "We should return any error we encounter when running the runner",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return nil
+					},
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
+					},
+					MockRun: func() (string, error) {
+						return "", errBoom
+					},
+				},
+			},
+			want: errors.Wrap(errBoom, ""),
+		},
+		"SuccessfulDeleteWithObserveAndDeletePolicy": {
+			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return nil
+					},
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
+					},
+					MockRun: func() (string, error) {
+						return "", nil
+					},
+				},
+			},
+			want: nil,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := external{runner: tc.fields.runner, kube: tc.fields.kube}
+			err := e.Delete(tc.args.ctx, tc.args.mg)
+			if diff := cmp.Diff(tc.want, err, test.EquateErrors()); diff != "" {
+				t.Errorf("\n%s\ne.Delete(...): -want error, +got error:\n%s\n", tc.reason, diff)
 			}
 		})
 	}

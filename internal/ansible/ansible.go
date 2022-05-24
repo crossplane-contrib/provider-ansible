@@ -18,6 +18,7 @@ package ansible
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -293,6 +294,11 @@ func new(o ...runnerOption) *Runner {
 	return r
 }
 
+// GetAnsibleRunPolicy to retrieve Ansible RunPolicy
+func (r *Runner) GetAnsibleRunPolicy() *RunPolicy {
+	return r.AnsibleRunPolicy
+}
+
 // Run execute the appropriate cmdFunc
 func (r *Runner) Run() (string, error) {
 	dc := r.cmdFunc(r.ansibleGathering, r.ansibleHosts, r.ansibleVerbosity)
@@ -323,6 +329,34 @@ func addRolePath(p Parameters, behaviorVars map[string]string) string {
 func (p Parameters) AddFile(path string, content []byte) error {
 	fullPath := filepath.Join(p.WorkingDirPath, path)
 	if err := os.WriteFile(fullPath, content, 0644); err != nil {
+		return err
+	}
+	return nil
+}
+
+// WriteExtraVar write extra var to env/extravars under working directory
+// it creates a non-existent env/extravars file
+func (r *Runner) WriteExtraVar(extraVar map[string]interface{}) error {
+	extraVarsPath := filepath.Join(r.Path, "env/extravars")
+	contentVars := map[string]interface{}{}
+	data, err := os.ReadFile(extraVarsPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if len(data) != 0 {
+		if err := json.Unmarshal(data, &contentVars); err != nil {
+			return err
+		}
+	}
+
+	contentVars["ansible_provider_meta"] = extraVar
+	contentVarsB, err := json.Marshal(contentVars)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(extraVarsPath, contentVarsB, 0644); err != nil {
 		return err
 	}
 	return nil

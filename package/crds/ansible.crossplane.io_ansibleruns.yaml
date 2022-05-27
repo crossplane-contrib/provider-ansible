@@ -67,22 +67,23 @@ spec:
                     description: The remote configuration of this AnsibleRun; the
                       content can be retrieved from Ansible Galaxy as community contents
                     items:
-                      type: string
+                      description: Role is definition of Ansible content role
+                      properties:
+                        name:
+                          type: string
+                        src:
+                          type: string
+                        version:
+                          type: string
+                      required:
+                      - name
+                      - src
+                      type: object
                     type: array
                   vars:
                     description: Configuration variables.
-                    items:
-                      description: A Var represents key/value variable.
-                      properties:
-                        key:
-                          type: string
-                        value:
-                          type: string
-                      required:
-                      - key
-                      - value
-                      type: object
-                    type: array
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                 type: object
               providerConfigRef:
                 default:

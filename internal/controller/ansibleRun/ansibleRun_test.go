@@ -19,6 +19,7 @@ package ansiblerun
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -61,7 +62,7 @@ func (e *ErrFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, e
 
 type MockPs struct {
 	MockInit          func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error)
-	MockGalaxyInstall func(ctx context.Context, behaviorVars map[string]string, isRoleRequirements, isCollectionRequirements bool) error
+	MockGalaxyInstall func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error
 	MockAddFile       func(path string, content []byte) error
 }
 
@@ -69,8 +70,8 @@ func (ps MockPs) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1
 	return ps.MockInit(ctx, cr, pc, behaviorVars)
 }
 
-func (ps MockPs) GalaxyInstall(ctx context.Context, behaviorVars map[string]string, isRoleRequirements, isCollectionRequirements bool) error {
-	return ps.MockGalaxyInstall(ctx, behaviorVars, isRoleRequirements, isCollectionRequirements)
+func (ps MockPs) GalaxyInstall(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
+	return ps.MockGalaxyInstall(ctx, behaviorVars, requirementsType)
 }
 
 func (ps MockPs) AddFile(path string, content []byte) error {
@@ -78,12 +79,13 @@ func (ps MockPs) AddFile(path string, content []byte) error {
 }
 
 type MockRunner struct {
-	MockRun              func() (string, error)
+	MockRun              func() (*exec.Cmd, error)
 	MockWriteExtraVar    func(extraVar map[string]interface{}) error
 	MockAnsibleRunPolicy func() *ansible.RunPolicy
+	MockEnableCheckMode  func(checkMode bool)
 }
 
-func (r MockRunner) Run() (string, error) {
+func (r MockRunner) Run() (*exec.Cmd, error) {
 	return r.MockRun()
 }
 
@@ -95,12 +97,17 @@ func (r MockRunner) GetAnsibleRunPolicy() *ansible.RunPolicy {
 	return r.MockAnsibleRunPolicy()
 }
 
+func (r MockRunner) EnableCheckMode(checkMode bool) {
+	r.MockEnableCheckMode(checkMode)
+}
+
 func TestConnect(t *testing.T) {
 	errBoom := errors.New("boom")
 	uid := types.UID("no-you-id")
 	pbCreds := "credentials"
 	requirements := "fakeRequirements"
-	inlineYaml := "I'm Yaml!"
+	inlineYaml := "IamYaml"
+	myRole := v1alpha1.Role{Name: "MyRole"}
 
 	type fields struct {
 		kube    client.Client
@@ -275,7 +282,9 @@ func TestConnect(t *testing.T) {
 							ProviderConfigReference: &xpv1.Reference{},
 						},
 						ForProvider: v1alpha1.AnsibleRunParameters{
-							Roles: []string{inlineYaml},
+							Roles: []v1alpha1.Role{
+								myRole,
+							},
 						},
 					},
 				},
@@ -324,7 +333,7 @@ func TestConnect(t *testing.T) {
 						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error) {
 							return nil, errBoom
 						},
-						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, isRoleRequirements, isCollectionRequirements bool) error {
+						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
 							return nil
 						},
 						MockAddFile: func(path string, content []byte) error {
@@ -363,7 +372,7 @@ func TestConnect(t *testing.T) {
 						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
-						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, isRoleRequirements, isCollectionRequirements bool) error {
+						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
 							return errBoom
 						},
 						MockAddFile: func(path string, content []byte) error {
@@ -397,7 +406,7 @@ func TestConnect(t *testing.T) {
 						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
-						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, isRoleRequirements, isCollectionRequirements bool) error {
+						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
 							return nil
 						},
 						MockAddFile: func(path string, content []byte) error {
@@ -502,12 +511,178 @@ func TestObserve(t *testing.T) {
 				err: errors.Wrap(errBoom, errGetAnsibleRun),
 			},
 		},
+		"GetObservedErrorWhenCheckWhenObservePolicy": {
+			reason: "We should return any error we encounter getting observed resource",
+			fields: fields{
+				runner: &MockRunner{
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "CheckWhenObserve",
+						}
+					},
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return nil
+					},
+					MockRun: func() (*exec.Cmd, error) {
+						return nil, errBoom
+					},
+					MockEnableCheckMode: func(checkMode bool) {
+
+					},
+				},
+			},
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			want: want{
+				err: errBoom,
+			},
+		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			e := external{runner: tc.fields.runner, kube: tc.fields.kube}
 			got, err := e.Observe(tc.args.ctx, tc.args.mg)
+			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
+				t.Errorf("\n%s\ne.Observe(...): -want error, +got error:\n%s\n", tc.reason, diff)
+			}
+			if diff := cmp.Diff(tc.want.o, got); diff != "" {
+				t.Errorf("\n%s\ne.Observe(...): -want, +got:\n%s\n", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestCreateOrUpdate(t *testing.T) {
+	errBoom := errors.New("boom")
+
+	type fields struct {
+		kube   client.Client
+		runner ansibleRunner
+	}
+
+	type args struct {
+		ctx context.Context
+		mg  resource.Managed
+	}
+
+	type want struct {
+		o   managed.ExternalCreation
+		err error
+	}
+
+	cases := map[string]struct {
+		reason string
+		fields fields
+		args   args
+		want   want
+	}{
+		"NotAnAnsibleRunError": {
+			reason: "We should return an error if the supplied managed resource is not an AnsibleRun",
+			args: args{
+				mg: nil,
+			},
+			want: want{
+				err: errors.New(errNotAnsibleRun),
+			},
+		},
+		"RunErrorWithObserveAndDeletePolicy": {
+			reason: "We should return any error we encounter when running the runner",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
+					},
+					MockEnableCheckMode: func(checkMode bool) {},
+					MockRun: func() (*exec.Cmd, error) {
+						return nil, errBoom
+					},
+				},
+			},
+			want: want{
+				err: errBoom,
+			},
+		},
+		"SuccessObserveAndDelete": {
+			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
+					},
+					MockEnableCheckMode: func(checkMode bool) {},
+					MockRun: func() (*exec.Cmd, error) {
+						ctx := context.Background()
+						cmd := exec.CommandContext(ctx, "ls")
+						cmd.Start()
+						return cmd, nil
+					},
+				},
+			},
+			want: want{},
+		},
+		"RunErrorWithCheckWhenObservePolicy": {
+			reason: "We should return any error we encounter when running the runner",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "CheckWhenObserve",
+						}
+					},
+					MockEnableCheckMode: func(checkMode bool) {},
+					MockRun: func() (*exec.Cmd, error) {
+						return nil, errBoom
+					},
+				},
+			},
+			want: want{
+				err: errBoom,
+			},
+		},
+		"SuccessCheckWhenObserve": {
+			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "CheckWhenObserve",
+						}
+					},
+					MockEnableCheckMode: func(checkMode bool) {},
+					MockRun: func() (*exec.Cmd, error) {
+						ctx := context.Background()
+						cmd := exec.CommandContext(ctx, "ls")
+						cmd.Start()
+						return cmd, nil
+					},
+				},
+			},
+			want: want{},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := external{runner: tc.fields.runner, kube: tc.fields.kube}
+			got, err := e.Create(tc.args.ctx, tc.args.mg)
 			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want error, +got error:\n%s\n", tc.reason, diff)
 			}
@@ -578,14 +753,14 @@ func TestDelete(t *testing.T) {
 							Name: "ObserveAndDelete",
 						}
 					},
-					MockRun: func() (string, error) {
-						return "", errBoom
+					MockRun: func() (*exec.Cmd, error) {
+						return nil, errBoom
 					},
 				},
 			},
-			want: errors.Wrap(errBoom, ""),
+			want: errBoom,
 		},
-		"SuccessfulDeleteWithObserveAndDeletePolicy": {
+		"SuccessObserveAndDelete": {
 			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
 			args: args{
 				mg: &v1alpha1.AnsibleRun{},
@@ -600,8 +775,58 @@ func TestDelete(t *testing.T) {
 							Name: "ObserveAndDelete",
 						}
 					},
-					MockRun: func() (string, error) {
-						return "", nil
+					MockRun: func() (*exec.Cmd, error) {
+						ctx := context.Background()
+						cmd := exec.CommandContext(ctx, "ls")
+						cmd.Start()
+						return cmd, nil
+					},
+				},
+			},
+			want: nil,
+		},
+		"RunErrorWithCheckWhenObservePolicy": {
+			reason: "We should return any error we encounter when running the runner",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return nil
+					},
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "CheckWhenObserve",
+						}
+					},
+					MockRun: func() (*exec.Cmd, error) {
+						return nil, errBoom
+					},
+				},
+			},
+			want: errBoom,
+		},
+		"SuccessCheckWhenObserve": {
+			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
+			args: args{
+				mg: &v1alpha1.AnsibleRun{},
+			},
+			fields: fields{
+				runner: &MockRunner{
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return nil
+					},
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "CheckWhenObserve",
+						}
+					},
+					MockRun: func() (*exec.Cmd, error) {
+						ctx := context.Background()
+						cmd := exec.CommandContext(ctx, "ls")
+						cmd.Start()
+						return cmd, nil
 					},
 				},
 			},

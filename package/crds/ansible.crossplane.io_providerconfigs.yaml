@@ -107,7 +107,8 @@ spec:
                 type: array
               requirements:
                 description: Requirements manage the necessary dependencies to run
-                  ansible collection. It is expressed as inline yaml.
+                  ansible collection. It is expressed as inline yaml. TODO support
+                  fetching Roles
                 type: string
               vars:
                 description: Vars are used to to customize Ansible default behavior.

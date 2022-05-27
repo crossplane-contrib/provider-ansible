@@ -17,25 +17,17 @@ limitations under the License.
 package v1alpha1
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// A ConfigurationSource represents the source of a AnsibleRun Configuration.
-// +kubebuilder:validation:Enum=Remote;Inline
-type ConfigurationSource string
-
-// Module sources.
-const (
-	ConfigurationSourceRemote ConfigurationSource = "Remote"
-	ConfigurationSourceInline ConfigurationSource = "Inline"
-)
-
-// A Var represents key/value variable.
-type Var struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
+// Role is definition of Ansible content role
+type Role struct {
+	Name string `json:"name"`
+	Src  string `json:"src"`
+	// +optional
+	Version string `json:"version,omitempty"`
 }
 
 // AnsibleRunParameters are the configurable fields of a AnsibleRun.
@@ -47,15 +39,16 @@ type AnsibleRunParameters struct {
 
 	// The remote configuration of this AnsibleRun; the content can be retrieved from Ansible Galaxy as community contents
 	// +optional
-	Roles []string `json:"roles"`
+	Roles []Role `json:"roles"`
 
 	// The remote configuration of this AnsibleRun; the content can be retrieved from Ansible Galaxy as community contents
 	// +optional
 	Playbooks []string `json:"playbooks"`
 
 	// Configuration variables.
+	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
-	Vars []Var `json:"vars,omitempty"`
+	Vars runtime.RawExtension `json:"vars,omitempty"`
 }
 
 // AnsibleRunObservation are the observable fields of a AnsibleRun.

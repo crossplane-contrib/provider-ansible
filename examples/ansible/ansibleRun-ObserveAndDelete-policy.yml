@@ -1,0 +1,58 @@
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: AnsibleRun
+metadata:
+  annotations:
+    ansible.crossplane.io/runPolicy: ObserveAndDelete
+  name: gcpbucket
+spec:
+  forProvider:
+    # AnsibleRun default to using a remote source.
+    # For simple cases you can use an inline source to specify the content of
+    # playbook.yaml as opaque, inline yaml.
+    # playbook source : https://docs.ansible.com/ansible/latest/collections/google/cloud/gcp_storage_bucket_module.html#examples
+    playbookInline: |
+      ---
+      - hosts: localhost
+        tasks:
+          - name: create a gcp bucket
+            google.cloud.gcp_storage_bucket:
+              name: ansible-storage-module
+              project: test-project
+              auth_kind: serviceaccount
+              service_account_file: gcp-credentials.json
+              state: present
+            when: ansible_provider_meta.gcpbucket.state == 'present'
+  providerConfigRef:
+    name: default
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: crossplane-system
+  name: gcp-credentials
+type: Opaque
+data:
+  credentials: BASE64ENCODED_PROVIDER_CREDS
+---
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  # Note that unlike most provider configs this one supports an array of
+  # credentials. This is because each Ansible playbook uses a single
+  # Crossplane provider config, but could use multiple providers each
+  # with their own credentials.
+  credentials:
+    - filename: gcp-credentials.json
+      source: Secret
+      secretRef:
+        namespace: crossplane-system
+        name: gcp-credentials
+        key: credentials
+  requirements: |
+    ---
+    collections:
+      - name: google.cloud
+        source: https://galaxy.ansible.com
+        version: "1.0.2"

@@ -91,11 +91,12 @@ func TestAnsibleRunPolicyInit(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.policy, func(t *testing.T) {
 			objectMeta.Annotations = map[string]string{AnnotationKeyPolicyRun: tc.policy}
+			myRole := v1alpha1.Role{Name: "MyRole"}
 			cr := v1alpha1.AnsibleRun{
 				ObjectMeta: objectMeta,
 				Spec: v1alpha1.AnsibleRunSpec{
 					ForProvider: v1alpha1.AnsibleRunParameters{
-						Roles: []string{"I'm Yaml!"},
+						Roles: []v1alpha1.Role{myRole},
 					},
 				},
 			}

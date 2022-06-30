@@ -22,6 +22,12 @@ import (
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 )
 
+// A Var represents key/value variable.
+type Var struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 // A ProviderConfigSpec defines the desired state of a ProviderConfig.
 type ProviderConfigSpec struct {
 	// Credentials required to authenticate to this provider.
@@ -29,6 +35,7 @@ type ProviderConfigSpec struct {
 
 	// Requirements manage the necessary dependencies to run ansible collection.
 	// It is expressed as inline yaml.
+	// TODO support fetching Roles
 	// +optional
 	Requirements *string `json:"requirements,omitempty"`
 

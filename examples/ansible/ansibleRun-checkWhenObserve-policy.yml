@@ -1,0 +1,49 @@
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: AnsibleRun
+metadata:
+  annotations:
+    ansible.crossplane.io/runPolicy: CheckWhenObserve
+  name: gcpdisk
+spec:
+  forProvider:
+    # AnsibleRun default to using a remote source
+    # For simple cases you can use an inline source to specify the content of
+    # playbook.yaml as opaque, inline yaml.
+    roles:
+      - name: ansible_provider.gcpdisk_role
+        src: https://github.com/multicloudlab/crossplane-ansible-provider-sample.git
+    vars:
+      project:
+        disk:
+          size: 20
+          key: 718BDCC469891
+          zone: europe-west1-b
+        id: test_project
+  providerConfigRef:
+    name: gcpconfig
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: crossplane-system
+  name: gcp-credentials
+type: Opaque
+data:
+  credentials: BASE64ENCODED_PROVIDER_CREDS
+---
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: gcpconfig
+spec:
+  # Note that unlike most provider configs this one supports an array of
+  # credentials. This is because each Ansible playbook uses a single
+  # Crossplane provider config, but could use multiple providers each
+  # with their own credentials.
+  credentials:
+    - filename: gcp-credentials.json
+      source: Secret
+      secretRef:
+        namespace: crossplane-system
+        name: gcp-credentials
+        key: credentials

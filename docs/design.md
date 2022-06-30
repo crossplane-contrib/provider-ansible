@@ -499,7 +499,7 @@ When this policy is applied, the provider will run the Ansible contents in `Obse
 
 ![](images/ansible-run-policy-2.png)
 
-Here is an example to run an Ansible role using ChenWhenObserve policy:
+Here is an example to run an Ansible role using CheckWhenObserve policy:
 
 ```yaml
 apiVersion: ansible.crossplane.io/v1alpha1

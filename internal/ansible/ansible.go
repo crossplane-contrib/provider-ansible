@@ -19,13 +19,17 @@ package ansible
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 
+	"github.com/pkg/errors"
+
+	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
+	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/provider-ansible/apis/v1alpha1"
 	"github.com/crossplane/provider-ansible/pkg/galaxyutil"
 	"github.com/crossplane/provider-ansible/pkg/runnerutil"
@@ -37,6 +41,10 @@ const (
 	AnsibleRolesPath = "ANSIBLE_ROLE_PATH"
 	// AnsibleCollectionsPath is key defined by the user
 	AnsibleCollectionsPath = "ANSIBLE_COLLECTION_PATH"
+)
+
+const (
+	errMarshalContentVars = "cannot marshal ContentVars into yaml document"
 )
 
 const (
@@ -131,6 +139,13 @@ func withAnsibleHosts(hosts string) runnerOption {
 	}
 }
 
+// withAnsibleEnvDir set the runner env/extravars dir.
+func withAnsibleEnvDir(dir string) runnerOption {
+	return func(r *Runner) {
+		r.AnsibleEnvDir = dir
+	}
+}
+
 // withAnsibleRunPolicy set the runner Policy to execute against.
 func withAnsibleRunPolicy(p *RunPolicy) runnerOption {
 	return func(r *Runner) {
@@ -138,17 +153,19 @@ func withAnsibleRunPolicy(p *RunPolicy) runnerOption {
 	}
 }
 
-type cmdFuncType func(gathering string, hosts string, verbosity int) *exec.Cmd
+type cmdFuncType func(gathering string, hosts string, verbosity int, checkMode bool) *exec.Cmd
 
 // playbookCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L75-L90
-func (p Parameters) playbookCmdFunc(ctx context.Context, path string) cmdFuncType {
-	return func(_ string, hosts string, verbosity int) *exec.Cmd {
-		cmdArgs := []string{"run", p.WorkingDirPath}
+func (p Parameters) playbookCmdFunc(ctx context.Context, playbookName string, path string) cmdFuncType {
+	return func(_ string, _ string, verbosity int, checkMode bool) *exec.Cmd {
+		cmdArgs := []string{"run", path}
 		cmdOptions := []string{
-			"-p", path,
-			"--hosts", hosts,
+			"-p", playbookName,
 		}
-
+		// enable check mode via cmdline https://github.com/ansible/ansible-runner/issues/580
+		if checkMode {
+			cmdOptions = append(cmdOptions, "--cmdline", "\\--check")
+		}
 		// check the verbosity since the exec.Command will fail if an arg as "" or " " be informed
 		if verbosity > 0 {
 			cmdOptions = append(cmdOptions, runnerutil.AnsibleVerbosityString(verbosity))
@@ -160,22 +177,17 @@ func (p Parameters) playbookCmdFunc(ctx context.Context, path string) cmdFuncTyp
 }
 
 // roleCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L92-L118
-func (p Parameters) roleCmdFunc(ctx context.Context, path string) (cmdFuncType, error) {
-	rolePath, roleName := filepath.Split(path)
-
-	wd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-
-	return func(gathering string, hosts string, verbosity int) *exec.Cmd {
+func (p Parameters) roleCmdFunc(ctx context.Context, roleName string, path string) cmdFuncType {
+	return func(gathering string, hosts string, verbosity int, checkMode bool) *exec.Cmd {
 		cmdOptions := []string{
 			"--role", roleName,
-			"--roles-path", rolePath,
 			"--hosts", hosts,
 		}
-		cmdArgs := []string{"run", wd}
-
+		cmdArgs := []string{"run", filepath.Join(path, roleName)}
+		// enable check mode via cmdline https://github.com/ansible/ansible-runner/issues/580
+		if checkMode {
+			cmdOptions = append(cmdOptions, "--cmdline", "\\--check")
+		}
 		// check the verbosity since the exec.Command will fail if an arg as "" or " " be informed
 		if verbosity > 0 {
 			cmdOptions = append(cmdOptions, runnerutil.AnsibleVerbosityString(verbosity))
@@ -191,20 +203,21 @@ func (p Parameters) roleCmdFunc(ctx context.Context, path string) (cmdFuncType, 
 		// gosec is disabled here because of G204. We should pay attention that user can't
 		// make command injection via command argument
 		return exec.CommandContext(ctx, p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
-	}, nil
+	}
 }
 
 // GalaxyInstall Install non-exists collections/roles with ansible-galaxy cli
-func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]string, isCollectionRequirements, isRoleRequirements bool) error {
+func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
 	requirementsFilePath := runnerutil.GetFullPath(p.WorkingDirPath, galaxyutil.RequirementsFile)
 	var cmdArgs []string
 	var cmdOptions []string
-	if isCollectionRequirements {
+	switch requirementsType {
+	case "collection":
 		cmdArgs = []string{"collection", "install"}
 		cmdOptions = []string{
 			"--requirements-file", requirementsFilePath,
 		}
-	} else if isRoleRequirements {
+	case "role":
 		cmdArgs = []string{"role", "install"}
 		cmdOptions = []string{
 			"--role-file", requirementsFilePath,
@@ -218,8 +231,8 @@ func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]s
 		} else if p.RolesPath != "" {
 			cmdOptions = append(cmdOptions, []string{"--roles-path", p.RolesPath}...)
 		}
-	}
 
+	}
 	// ansible-galaxy is by default verbose
 	cmdOptions = append(cmdOptions, "--verbose")
 
@@ -229,16 +242,17 @@ func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]s
 
 	out, err := dc.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to install galaxy collections/roles: %v: %v", string(out), err)
+		return fmt.Errorf("failed to install galaxy collections/roles: %v: %w", string(out), err)
 	}
 	return nil
 }
 
 // Init initializes a new runner from parameters
+// nolint: gocyclo
 func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*Runner, error) {
 	var cmdFunc cmdFuncType
 	var err error
-	var path string
+	var path, ansibleEnvDir string
 
 	switch {
 	case cr.Spec.ForProvider.PlaybookInline == nil && len(cr.Spec.ForProvider.Roles) == 0:
@@ -247,27 +261,51 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alp
 		return nil, errors.New("cannot execute Playbook(s) and Role(s) at the same time, please respect Mutual Exclusion")
 	case cr.Spec.ForProvider.PlaybookInline != nil:
 		// For inline mode playbook is stored in the predefined playbookYml file
-		path = runnerutil.PlaybookYml
-		cmdFunc = p.playbookCmdFunc(ctx, path)
+		path = p.WorkingDirPath
+		cmdFunc = p.playbookCmdFunc(ctx, runnerutil.PlaybookYml, path)
+		// init ansible env dir
+		ansibleEnvDir = filepath.Clean(filepath.Join(path, "env"))
 	case len(cr.Spec.ForProvider.Roles) != 0:
-		path := addRolePath(p, behaviorVars)
-		if cmdFunc, err = p.roleCmdFunc(ctx, path); err != nil {
+		var err error
+		path, err = addRolePath(p, behaviorVars)
+		if err != nil {
 			return nil, err
 		}
+		// TODO support multiple roles execution
+		cmdFunc = p.roleCmdFunc(ctx, cr.Spec.ForProvider.Roles[0].Name, path)
+		// init ansible env dir
+		ansibleEnvDir = filepath.Clean(filepath.Join(path, cr.Spec.ForProvider.Roles[0].Name, "env"))
+	}
+
+	// prepare ansible runner extravars
+	// create extravars file even empty. We need the extravars file later to handle status variables
+	if err := os.MkdirAll(ansibleEnvDir, 0700); resource.Ignore(os.IsExist, err) != nil {
+		return nil, errors.Wrap(err, "cannot make Playbook directory")
+	}
+	contentVarsBytes, err := cr.Spec.ForProvider.Vars.MarshalJSON()
+	if err != nil {
+		return nil, errors.Wrap(err, errMarshalContentVars)
+	}
+	if string(contentVarsBytes) == "null" {
+		contentVarsBytes = nil
+	}
+	if err := addFile(filepath.Join(ansibleEnvDir, "extravars"), contentVarsBytes); err != nil {
+		return nil, err
 	}
 
 	rPolicy, err := newRunPolicy(GetPolicyRun(cr))
 	if err != nil {
 		return nil, err
 	}
-	return new(withPath(p.WorkingDirPath),
+	return new(withPath(path),
 		withCmdFunc(cmdFunc),
 		// TODO add verbosity filed to the API, now it is ignored by (0) value
 		withAnsibleVerbosity(0),
 		withAnsibleGathering(behaviorVars["ANSIBLE_GATHERING"]),
 		// TODO hosts should be handled via configuration vars e.g: vars["hosts"]
-		withAnsibleHosts(""),
+		withAnsibleHosts("localhost"),
 		withAnsibleRunPolicy(rPolicy),
+		withAnsibleEnvDir(ansibleEnvDir),
 	), nil
 }
 
@@ -279,6 +317,8 @@ type Runner struct {
 	ansibleVerbosity int
 	ansibleGathering string
 	ansibleHosts     string
+	AnsibleEnvDir    string
+	checkMode        bool
 	AnsibleRunPolicy *RunPolicy
 }
 
@@ -300,35 +340,53 @@ func (r *Runner) GetAnsibleRunPolicy() *RunPolicy {
 }
 
 // Run execute the appropriate cmdFunc
-func (r *Runner) Run() (string, error) {
-	dc := r.cmdFunc(r.ansibleGathering, r.ansibleHosts, r.ansibleVerbosity)
+func (r *Runner) Run() (*exec.Cmd, error) {
+	dc := r.cmdFunc(r.ansibleGathering, r.ansibleHosts, r.ansibleVerbosity, r.checkMode)
 	behaviorVarsSlice := runnerutil.ConvertMapToSlice(r.behaviorVars)
 	// Append current environment since setting dc.Env to anything other than nil overwrites current env
 	// Some behaviorVars are not assessed because they are actually passed to cmd as flag
 	dc.Env = append(dc.Env, os.Environ()...)
 	dc.Env = append(dc.Env, behaviorVarsSlice...)
-	output, err := dc.CombinedOutput()
+
+	dc.Stdout = os.Stdout
+	dc.Stderr = os.Stderr
+
+	err := dc.Start()
 	if err != nil {
-		return string(output), err
+		return nil, err
 	}
-	return string(output), nil
+
+	return dc, nil
 }
 
-// addRolePath will determines the role paths
-func addRolePath(p Parameters, behaviorVars map[string]string) string {
+// addRolePath will determines the role path
+func addRolePath(p Parameters, behaviorVars map[string]string) (string, error) {
 	var rolesPath string
-	if behaviorVars[AnsibleRolesPath] != "" {
+	switch {
+	case behaviorVars[AnsibleRolesPath] != "":
 		rolesPath = behaviorVars[AnsibleRolesPath]
-	} else if p.RolesPath != "" {
+	case p.RolesPath != "":
 		rolesPath = p.RolesPath
+	default:
+		// default Ansible Configuration
+		u, err := user.Current()
+		if err != nil {
+			return "", err
+		}
+		rolesPaths := []string{filepath.Clean(filepath.Join(u.HomeDir, ".ansible/roles")), "/usr/share/ansible/roles", "/etc/ansible/roles"}
+		for _, possiblePath := range rolesPaths {
+			if _, err := os.Stat(possiblePath); err == nil {
+				rolesPath = possiblePath
+				break
+			}
+		}
 	}
-	return rolesPath
+	return rolesPath, nil
 }
 
-// AddFile from https://github.com/operator-framework/operator-sdk/blob/master/internal/ansible/runner/internal/inputdir/inputdir.go#L55-L63
-func (p Parameters) AddFile(path string, content []byte) error {
-	fullPath := filepath.Join(p.WorkingDirPath, path)
-	if err := os.WriteFile(fullPath, content, 0644); err != nil {
+// addFile micmics https://github.com/operator-framework/operator-sdk/blob/master/internal/ansible/runner/internal/inputdir/inputdir.go#L55-L63
+func addFile(path string, content []byte) error {
+	if err := os.WriteFile(path, content, 0600); err != nil {
 		return err
 	}
 	return nil
@@ -337,9 +395,9 @@ func (p Parameters) AddFile(path string, content []byte) error {
 // WriteExtraVar write extra var to env/extravars under working directory
 // it creates a non-existent env/extravars file
 func (r *Runner) WriteExtraVar(extraVar map[string]interface{}) error {
-	extraVarsPath := filepath.Join(r.Path, "env/extravars")
-	contentVars := map[string]interface{}{}
-	data, err := os.ReadFile(extraVarsPath)
+	extraVarsPath := filepath.Join(r.AnsibleEnvDir, "extravars")
+	contentVars := make(map[string]interface{})
+	data, err := os.ReadFile(filepath.Clean(extraVarsPath))
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return err
@@ -350,23 +408,20 @@ func (r *Runner) WriteExtraVar(extraVar map[string]interface{}) error {
 			return err
 		}
 	}
-
 	contentVars["ansible_provider_meta"] = extraVar
 	contentVarsB, err := json.Marshal(contentVars)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(extraVarsPath, contentVarsB, 0644); err != nil {
+	if err := os.WriteFile(extraVarsPath, contentVarsB, 0600); err != nil {
 		return err
 	}
 	return nil
 }
 
-// Changes parse 'ansible-playbook --check' results to determine whether there is a diff between
-// the desired and the actual state of the configuration. It returns true if
-// there is a diff.
-// TODO we should handle EXTRA_VARS as we invoke the Diff func
-/*func diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
+// Diff parses `ansible-runner --check` json output to determine whether there is a diff between
+// the desired and the actual state of the configuration. It returns true if there is a diff.
+func Diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
 
 	var changes bool
 	// check changes for all hosts
@@ -378,21 +433,26 @@ func (r *Runner) WriteExtraVar(extraVar map[string]interface{}) error {
 	}
 
 	return changes, exists(res)
-}*/
+}
 
 // Exists must be true if a corresponding external resource exists
-/*func exists(res *results.AnsiblePlaybookJSONResults) bool {
+func exists(res *results.AnsiblePlaybookJSONResults) bool {
 	var resourcesExists bool
 	// check changes for all hosts
 	for _, stats := range res.Stats {
-		//We assume that if stats.Ok == stats.Changed { 0 resourcesexists }
+		// We assume that if stats.Ok == stats.Changed { 0 resourcesexists }
 		if stats.Ok-stats.Changed > 0 {
 			resourcesExists = true
 			break
 		}
 	}
 	return resourcesExists
-}*/
+}
+
+// EnableCheckMode enable the runner checkMode.
+func (r *Runner) EnableCheckMode(m bool) {
+	r.checkMode = m
+}
 
 // runWithCheckMode plays `ansible-runner` with check mode
 // then parse JSON stream results
@@ -414,12 +474,8 @@ func (r *Runner) WriteExtraVar(extraVar map[string]interface{}) error {
 	return err
 }*/
 
-// run playbook and parse result
-/*func runAndParsePlaybook(ctx context.Context, pbCmd *PbCmd) (*results.AnsiblePlaybookJSONResults, error) {
-	go func(ctx context.Context, pbCmd *PbCmd) {
-		_ = pbCmd.Playbook.Run(ctx)
-	}(ctx, pbCmd)
-
+// ParseCmdJsonOutput parse ansible-runner json output
+/*func ParseCmdJsonOutput(ctx context.Context, pbCmd *PbCmd) (*results.AnsiblePlaybookJSONResults, error) {
 	res, err := results.ParseJSONResultsStream(os.Stdout)
 	return res, err
 }*/

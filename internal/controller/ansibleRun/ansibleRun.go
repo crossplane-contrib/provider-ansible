@@ -272,7 +272,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 type external struct {
 	runner ansibleRunner
-	kube   client.Reader
+	kube   client.Client
 }
 
 // nolint: gocyclo
@@ -285,7 +285,7 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	switch c.runner.GetAnsibleRunPolicy().Name {
 	case "ObserveAndDelete", "":
 		if c.runner.GetAnsibleRunPolicy().Name == "" {
-			ansible.SetPolicyRun(mg, "ObserveAndDelete")
+			ansible.SetPolicyRun(cr, "ObserveAndDelete")
 		}
 		if meta.WasDeleted(cr) {
 			return managed.ExternalObservation{ResourceExists: true}, nil
@@ -300,14 +300,13 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 			}
 			return managed.ExternalObservation{}, errors.Wrap(err, errGetAnsibleRun)
 		}
-		var last *v1alpha1.AnsibleRun
+		var lastParameters *v1alpha1.AnsibleRunParameters
 		var err error
-		last, err = getLastApplied(observed)
+		lastParameters, err = getLastAppliedParameters(observed)
 		if err != nil {
 			return managed.ExternalObservation{}, errors.Wrap(err, errGetLastApplied)
 		}
-
-		return c.handleLastApplied(last, cr)
+		return c.handleLastApplied(ctx, lastParameters, cr)
 	case "CheckWhenObserve":
 		stateVar := make(map[string]string)
 		stateVar["state"] = "present"
@@ -368,7 +367,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	return managed.ExternalUpdate{ConnectionDetails: nil}, nil
 }
 
-func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
+func (c *external) Delete(_ context.Context, mg resource.Managed) error {
 	cr, ok := mg.(*v1alpha1.AnsibleRun)
 	if !ok {
 		return errors.New(errNotAnsibleRun)
@@ -390,36 +389,31 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 	if err = dc.Wait(); err != nil {
 		return err
 	}
-
 	return nil
 }
 
-func getLastApplied(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleRun, error) {
+func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleRunParameters, error) {
 	lastApplied, ok := observed.GetAnnotations()[v1.LastAppliedConfigAnnotation]
 	if !ok {
 		return nil, nil
 	}
-
-	last := &v1alpha1.AnsibleRun{}
-	if err := json.Unmarshal([]byte(lastApplied), last); err != nil {
+	lastParameters := &v1alpha1.AnsibleRunParameters{}
+	if err := json.Unmarshal([]byte(lastApplied), lastParameters); err != nil {
 		return nil, errors.Wrap(err, errUnmarshalTemplate)
 	}
 
-	if last.GetName() == "" {
-		last.SetName(observed.GetName())
-	}
-
-	return last, nil
+	return lastParameters, nil
 }
 
 // nolint: gocyclo
 // TODO reduce cyclomatic complexity
-func (c *external) handleLastApplied(last, desired *v1alpha1.AnsibleRun) (managed.ExternalObservation, error) {
+func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alpha1.AnsibleRunParameters, desired *v1alpha1.AnsibleRun) (managed.ExternalObservation, error) {
 	isUpToDate := false
-
-	if last != nil && equality.Semantic.DeepEqual(last, desired) {
-		// Mark as up-to-date since last is equal to desired
-		isUpToDate = true
+	if lastParameters != nil {
+		if equality.Semantic.DeepEqual(*lastParameters, desired.Spec.ForProvider) {
+			// Mark as up-to-date since last is equal to desired
+			isUpToDate = true
+		}
 	}
 
 	if !isUpToDate {
@@ -437,13 +431,28 @@ func (c *external) handleLastApplied(last, desired *v1alpha1.AnsibleRun) (manage
 		if err = dc.Wait(); err != nil {
 			return managed.ExternalObservation{}, err
 		}
+
+		out, err := json.Marshal(desired.Spec.ForProvider)
+		if err != nil {
+			return managed.ExternalObservation{}, err
+		}
+		// set LastAppliedConfig Annotation to avoid useless cmd run
+		meta.AddAnnotations(desired, map[string]string{
+			v1.LastAppliedConfigAnnotation: string(out),
+		})
+		// set Deletion Policy to Orphan for non-existence of external resource
+		desired.SetDeletionPolicy(xpv1.DeletionOrphan)
+
+		if err := c.kube.Update(ctx, desired); err != nil {
+			return managed.ExternalObservation{}, err
+		}
 	}
 
-	return managed.ExternalObservation{
-		ResourceExists:          true,
-		ResourceUpToDate:        true,
-		ResourceLateInitialized: true,
-	}, nil
+	// The crossplane runtime is not aware of the external resource created by ansible content.
+	// Nothing will notify us if and when the ansible content we manage
+	// changes, so we requeue a speculative reconcile after the specified poll
+	// interval in order to observe it and react accordingly.
+	return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 }
 
 func addBehaviorVars(pc *v1alpha1.ProviderConfig) (map[string]string, error) {

@@ -20,8 +20,8 @@
 
 provider-ansible is the Crossplane infrastructure provider for Ansible.
 
-The Ansible provider adds support for a `PlaybookSet` managed resource that
-represents an Ansible Playbook(s). The configuration of each playbook may be
+The Ansible provider adds support for the `AnsibleRun` managed resource that
+represents the Ansible content(s). The configuration of the ansible content may be
 either fetched from a remote source (e.g. git), or simply specified inline.
 
 
@@ -41,14 +41,14 @@ open an [issue](https://github.com/cloud-pak-gitops/crossplane-provider-ansible/
 
 ### Run against a Kubernetes cluster
 
-If you have [go (1.16+)](https://golang.org/doc/devel/release.html#policy) and [docker](https://www.docker.com/) installed 
+If you have [go (1.17+)](https://golang.org/doc/devel/release.html#policy) and [docker](https://www.docker.com/) installed 
 
 ```console
 make dev
 ```
 is all you need!
 
-clean the dev environement:
+clean the dev environment:
 ```console
 make dev-clean
 ```
@@ -92,6 +92,3 @@ kubectl get crds
 ## Licensing
 
 provider-ansible is under the Apache 2.0 license.
-
-[![FOSSA
-Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fcrossplane%2Fprovider-gcp.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2Fcrossplane%2Fprovider-gcp?ref=badge_large)

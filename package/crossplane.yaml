@@ -12,4 +12,4 @@ metadata:
 
 spec:
   controller:
-    image: DOCKER_REGISTRY/provider-ansible:VERSION
+    image: DOCKER_REGISTRY/provider-ansible-controller:VERSION

@@ -7,6 +7,7 @@ include ../../../build/makelib/common.mk
 # ====================================================================================
 #  Options
 IMAGE = $(BUILD_REGISTRY)/provider-ansible-controller-$(ARCH)
+OSBASEIMAGE = alpinelinux/ansible
 include ../../../build/makelib/image.mk
 
 # ====================================================================================

@@ -70,7 +70,7 @@ const (
 )
 
 const (
-	baseWorkingDir = "ansibleDir"
+	baseWorkingDir = "/ansibleDir"
 )
 
 type params interface {

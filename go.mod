@@ -1,6 +1,6 @@
 module github.com/crossplane/provider-ansible
 
-go 1.17
+go 1.19
 
 require (
 	github.com/apenella/go-ansible v1.1.7

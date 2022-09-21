@@ -17,6 +17,7 @@ GO_LDFLAGS += -X $(GO_PROJECT)/internal/version.Version=$(VERSION)
 GO_SUBDIRS += cmd internal apis
 GO111MODULE = on
 GOLANGCILINT_VERSION = 1.49.0
+RUNNING_IN_CI = true
 -include build/makelib/golang.mk
 
 # Setup Kubernetes tools

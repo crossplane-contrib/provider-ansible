@@ -1,4 +1,4 @@
-module github.com/crossplane/provider-ansible
+module github.com/crossplane-contrib/provider-ansible
 
 go 1.19
 

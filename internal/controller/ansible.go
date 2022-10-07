@@ -20,10 +20,10 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
-	ansiblerun "github.com/crossplane/provider-ansible/internal/controller/ansibleRun"
 
-	"github.com/crossplane/provider-ansible/internal/controller/config"
+	"github.com/crossplane-contrib/provider-ansible/internal/controller/config"
 )
 
 // Setup creates all Template controllers with the supplied logger and adds them to

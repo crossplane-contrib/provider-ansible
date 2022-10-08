@@ -28,11 +28,11 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
+	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
+	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
-	"github.com/crossplane/provider-ansible/apis/v1alpha1"
-	"github.com/crossplane/provider-ansible/pkg/galaxyutil"
-	"github.com/crossplane/provider-ansible/pkg/runnerutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 

@@ -4,12 +4,16 @@ metadata:
   name: provider-ansible
   annotations:
     meta.crossplane.io/maintainer: Crossplane Maintainers <info@crossplane.io>
-    meta.crossplane.io/source: provider-ansible
+    meta.crossplane.io/source: github.com/crossplane-contrib/provider-ansible
     meta.crossplane.io/license: Apache-2.0
     meta.crossplane.io/description: |
       The Ansible Crossplane provider adds support for
       managing Ansible resources in Kubernetes.
 
-spec:
-  controller:
-    image: DOCKER_REGISTRY/provider-ansible-controller:VERSION
+    meta.crossplane.io/readme: |
+      `provider-ansible` is the Crossplane infrastructure provider for [Ansible](https://www.ansible.com/).
+      If you encounter an issue please reach out on
+      [slack.crossplane.io](https://slack.crossplane.io) and create an issue in
+      the
+      [crossplane-contrib/provider-ansible](https://github.com/crossplane-contrib/provider-ansible)
+      repo.

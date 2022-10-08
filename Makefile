@@ -1,15 +1,20 @@
 # ====================================================================================
 # Setup Project
 PROJECT_NAME := provider-ansible
-PROJECT_REPO := github.com/crossplane/$(PROJECT_NAME)
+PROJECT_REPO := github.com/crossplane-contrib/$(PROJECT_NAME)
 
 PLATFORMS ?= linux_amd64
 -include build/makelib/common.mk
 
+# ====================================================================================
 # Setup Output
+
 -include build/makelib/output.mk
 
+# ====================================================================================
 # Setup Go
+
+GO_REQUIRED_VERSION = 1.19
 NPROCS ?= 1
 GO_TEST_PARALLEL := $(shell echo $$(( $(NPROCS) / 2 )))
 GO_STATIC_PACKAGES = $(GO_PROJECT)/cmd/provider
@@ -20,13 +25,35 @@ GOLANGCILINT_VERSION = 1.49.0
 RUNNING_IN_CI = true
 -include build/makelib/golang.mk
 
+# ====================================================================================
 # Setup Kubernetes tools
+
+UP_VERSION = v0.13.0
+UP_CHANNEL = stable
 -include build/makelib/k8s_tools.mk
 
+# ====================================================================================
 # Setup Images
-DOCKER_REGISTRY ?= crossplane
-IMAGES = $(PROJECT_NAME) $(PROJECT_NAME)-controller
--include build/makelib/image.mk
+
+IMAGES = provider-ansible
+-include build/makelib/imagelight.mk
+
+# ====================================================================================
+# Setup XPKG
+
+XPKG_REG_ORGS ?= xpkg.upbound.io/crossplane-contrib index.docker.io/crossplanecontrib
+# NOTE(hasheddan): skip promoting on xpkg.upbound.io as channel tags are
+# inferred.
+XPKG_REG_ORGS_NO_PROMOTE ?= xpkg.upbound.io/crossplane-contrib
+XPKGS = provider-ansible
+-include build/makelib/xpkg.mk
+
+# NOTE(hasheddan): we force image building to happen prior to xpkg build so that
+# we ensure image is present in daemon.
+xpkg.build.provider-ansible: do.build.images
+
+# ====================================================================================
+# Targets
 
 fallthrough: submodules
 	@echo Initial setup complete. Running make again . . .
@@ -62,6 +89,11 @@ submodules:
 # identify its location in CI so that we cache between builds.
 go.cachedir:
 	@go env GOCACHE
+
+# NOTE(hasheddan): we must ensure up is installed in tool cache prior to build
+# as including the k8s_tools machinery prior to the xpkg machinery sets UP to
+# point to tool cache.
+build.init: $(UP)
 
 # This is for running out-of-cluster locally, and is for convenience. Running
 # this make target will print out the command which was used. For more control,

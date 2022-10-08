@@ -22,8 +22,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/crossplane/provider-ansible/apis/v1alpha1"
-	"github.com/crossplane/provider-ansible/pkg/runnerutil"
+	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 	"gotest.tools/v3/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"

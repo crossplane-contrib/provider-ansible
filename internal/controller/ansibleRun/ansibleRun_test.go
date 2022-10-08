@@ -30,13 +30,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
+	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
-	"github.com/crossplane/provider-ansible/apis/v1alpha1"
-	"github.com/crossplane/provider-ansible/internal/ansible"
-	"github.com/crossplane/provider-ansible/pkg/runnerutil"
 )
 
 type ErrFs struct {

@@ -10,6 +10,5 @@ guidelines and responsibilities for the steering committee and maintainers.
 
 ## Maintainers
 
-* Nic Cope <negz@upbound.io> ([negz](https://github.com/negz))
-* Daniel Mangum <dan@upbound.io> ([hasheddan](https://github.com/hasheddan))
-* Muvaffak Onuş <monus@upbound.io> ([muvaf](https://github.com/muvaf))
+* Fahed Dorgaa <fahed.dorgaa@gmail.com> ([fahedouch](https://github.com/fahedouch))
+* Mo Ying (William) <morningspace@yahoo.com> ([morningspace](https://github.com/morningspace))

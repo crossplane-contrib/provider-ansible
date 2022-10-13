@@ -1,6 +1,6 @@
 FROM alpinelinux/ansible
 RUN apk --no-cache add ca-certificates bash
-RUN pip3 install ansible-runner
+RUN pip3 install ansible-runner requests
 
 ARG TARGETOS
 ARG TARGETARCH

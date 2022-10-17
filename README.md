@@ -40,7 +40,7 @@ guidelines to get started.
 ## Report a Bug
 
 For filing bugs, suggesting improvements, or requesting new features, please
-open an [issue](https://github.com/crossplane/provider-ansible/issues).
+open an [issue](https://github.com/crossplane-contrib/provider-ansible/issues).
 
 ## Contact
 

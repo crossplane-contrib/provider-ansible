@@ -1,0 +1,40 @@
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: AnsibleRun
+metadata:
+  annotations:
+    ansible.crossplane.io/runPolicy: ObserveAndDelete
+  name: remote-test
+spec:
+  forProvider:
+    playbookInline: |
+      ---
+      - hosts: test-host.local
+        tasks:
+          - name: taskname
+            ...
+  providerConfigRef:
+    name: ssh-key
+
+
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: ssh-key
+spec:
+  credentials:
+    - filename: ssh-key.json
+      source: Secret
+      secretRef:
+        namespace: crossplane-system
+        name: ssh-key
+        key: key
+        
+        
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: crossplane-system
+  name: ssh-key
+type: Opaque
+data:
+  key: ssh_private_key_placeholder

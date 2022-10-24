@@ -10,7 +10,7 @@ jobs:
     steps:
     - name: Extract Command
       id: command
-      uses: xt0rted/slash-command-action@v1
+      uses: xt0rted/slash-command-action@v2
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         command: points
@@ -70,7 +70,7 @@ jobs:
     steps:
     - name: Extract Command
       id: command
-      uses: xt0rted/slash-command-action@v1
+      uses: xt0rted/slash-command-action@v2
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         command: backport

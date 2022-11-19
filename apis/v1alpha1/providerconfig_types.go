@@ -39,7 +39,7 @@ type ProviderConfigSpec struct {
 	// +optional
 	Requirements *string `json:"requirements,omitempty"`
 
-	// Vars are used to to customize Ansible default behavior.
+	// Vars are used to customize the provider default behavior.
 	// +optional
 	Vars []Var `json:"vars,omitempty"`
 }

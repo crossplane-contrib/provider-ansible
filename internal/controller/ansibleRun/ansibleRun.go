@@ -17,8 +17,11 @@ limitations under the License.
 package ansiblerun
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +39,6 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
-	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v2"
 	v1 "k8s.io/api/core/v1"
@@ -54,13 +56,15 @@ const (
 	errTrackPCUsage        = "cannot track ProviderConfig usage"
 	errGetPC               = "cannot get ProviderConfig"
 	errGetCreds            = "cannot get credentials"
+	errGetInventory        = "cannot get Inventory"
 	errWriteGitCreds       = "cannot write .git-credentials to /tmp dir"
 	errWriteConfig         = "cannot write ansible collection requirements in" + galaxyutil.RequirementsFile
 	errWriteCreds          = "cannot write Playbook credentials"
 	errRemoteConfiguration = "cannot get remote AnsibleRun configuration"
 	errWriteAnsibleRun     = "cannot write AnsibleRun configuration in" + runnerutil.PlaybookYml
+	errWriteInventory      = "cannot write AnsibleRun inventory in"
 	errMarshalRoles        = "cannot marshal Roles into yaml document"
-	errMkdir               = "cannot make Playbook directory"
+	errMkdir               = "cannot make directory"
 	errInit                = "cannot initialize Ansible client"
 	gitCredentialsFilename = ".git-credentials"
 
@@ -70,11 +74,11 @@ const (
 )
 
 const (
-	baseWorkingDir = "/ansibleDir"
+	baseWorkingDir = "./ansibleDir"
 )
 
 type params interface {
-	Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error)
+	Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error)
 	GalaxyInstall(ctx context.Context, behaviorVars map[string]string, requirementsType string) error
 }
 
@@ -155,16 +159,38 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	// garbage collector that is started in Setup.
 	dir := filepath.Join(baseWorkingDir, string(cr.GetUID()))
 	if err := c.fs.MkdirAll(dir, 0700); resource.Ignore(os.IsExist, err) != nil {
-		return nil, errors.Wrap(err, errMkdir)
+		return nil, fmt.Errorf("%s: %s: %w", baseWorkingDir, errMkdir, err)
 	}
 
 	if err := c.usage.Track(ctx, mg); err != nil {
-		return nil, errors.Wrap(err, errTrackPCUsage)
+		return nil, fmt.Errorf("%s: %w", errTrackPCUsage, err)
 	}
 
 	pc := &v1alpha1.ProviderConfig{}
 	if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.GetProviderConfigReference().Name}, pc); err != nil {
-		return nil, errors.Wrap(err, errGetPC)
+		return nil, fmt.Errorf("%s: %w", errGetPC, err)
+	}
+
+	// Saved inventory needed for ansible content hosts
+	var buff bytes.Buffer
+	for _, i := range cr.Spec.ForProvider.Inventories {
+		data, err := resource.CommonCredentialExtractor(ctx, i.Source, c.kube, i.CommonCredentialSelectors)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", errGetInventory, err)
+		}
+		if _, err := buff.WriteString(string(data) + "\n"); err != nil {
+			return nil, err
+		}
+	}
+	if cr.Spec.ForProvider.InventoryInline != nil {
+		if _, err := buff.WriteString(*cr.Spec.ForProvider.InventoryInline + "\n"); err != nil {
+			return nil, err
+		}
+	}
+	if buff.Len() != 0 {
+		if err := c.fs.WriteFile(filepath.Join(dir, runnerutil.Hosts), buff.Bytes(), 0600); err != nil {
+			return nil, fmt.Errorf("%s %s: %w", errWriteInventory, runnerutil.Hosts, err)
+		}
 	}
 
 	var requirementRoles []byte
@@ -175,14 +201,14 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		var err error
 		requirementRoles, err = yaml.Marshal(&rolesMap)
 		if err != nil {
-			return nil, errors.Wrap(err, errMarshalRoles)
+			return nil, fmt.Errorf("%s: %w", errMarshalRoles, err)
 		}
 		// prepare git credentials for ansible-galaxy to fetch remote roles
 		// TODO(fahed) support other private remote repository
 		// NOTE(ytsarev): Retrieve .git-credentials from Spec to /tmp outside of AnsibleRun directory
 		gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
 		if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
-			return nil, errors.Wrap(err, errWriteGitCreds)
+			return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
 		}
 		for _, cd := range pc.Spec.Credentials {
 			if cd.Filename != gitCredentialsFilename {
@@ -190,22 +216,22 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			}
 			data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
 			if err != nil {
-				return nil, errors.Wrap(err, errGetCreds)
+				return nil, fmt.Errorf("%s: %w", errGetCreds, err)
 			}
 			p := filepath.Clean(filepath.Join(gitCredDir, filepath.Base(cd.Filename)))
 			if err := c.fs.WriteFile(p, data, 0600); err != nil {
-				return nil, errors.Wrap(err, errWriteGitCreds)
+				return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
 			}
 			// NOTE(ytsarev): Make go-getter pick up .git-credentials, see /.gitconfig in the container image
 			// TODO: check wether go-getter is used in the ansible case
 			err = os.Setenv("GIT_CRED_DIR", gitCredDir)
 			if err != nil {
-				return nil, errors.Wrap(err, errRemoteConfiguration)
+				return nil, fmt.Errorf("%s: %w", errRemoteConfiguration, err)
 			}
 		}
 	} else if cr.Spec.ForProvider.PlaybookInline != nil {
 		if err := c.fs.WriteFile(filepath.Join(dir, runnerutil.PlaybookYml), []byte(*cr.Spec.ForProvider.PlaybookInline), 0600); err != nil {
-			return nil, errors.Wrap(err, errWriteAnsibleRun)
+			return nil, fmt.Errorf("%s: %w", errWriteAnsibleRun, err)
 		}
 	}
 
@@ -213,11 +239,11 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	for _, cd := range pc.Spec.Credentials {
 		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
 		if err != nil {
-			return nil, errors.Wrap(err, errGetCreds)
+			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
 		}
 		p := filepath.Clean(filepath.Join(dir, filepath.Base(cd.Filename)))
 		if err := c.fs.WriteFile(p, data, 0600); err != nil {
-			return nil, errors.Wrap(err, errWriteCreds)
+			return nil, fmt.Errorf("%s: %w", errWriteCreds, err)
 		}
 	}
 
@@ -246,7 +272,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		// write requirements to requirements.yml
 		req := strings.Join(reqSlice, "\n")
 		if err := c.fs.WriteFile(filepath.Join(dir, galaxyutil.RequirementsFile), []byte(req), 0600); err != nil {
-			return nil, errors.Wrap(err, errWriteConfig)
+			return nil, fmt.Errorf("%s: %w", errWriteConfig, err)
 		}
 		// install ansible requirements using ansible-galaxy
 		switch requirementsType {
@@ -262,9 +288,10 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 	}
 
-	r, err := ps.Init(ctx, cr, pc, behaviorVars)
+	r, err := ps.Init(ctx, cr, behaviorVars)
 	if err != nil {
-		return nil, errors.Wrap(err, errInit)
+		return nil, fmt.Errorf("%s: %w", errInit, err)
+
 	}
 
 	return &external{runner: r, kube: c.kube}, nil
@@ -298,13 +325,13 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 			if kerrors.IsNotFound(err) {
 				return managed.ExternalObservation{ResourceExists: false}, nil
 			}
-			return managed.ExternalObservation{}, errors.Wrap(err, errGetAnsibleRun)
+			return managed.ExternalObservation{}, fmt.Errorf("%s: %w", errGetAnsibleRun, err)
 		}
 		var lastParameters *v1alpha1.AnsibleRunParameters
 		var err error
 		lastParameters, err = getLastAppliedParameters(observed)
 		if err != nil {
-			return managed.ExternalObservation{}, errors.Wrap(err, errGetLastApplied)
+			return managed.ExternalObservation{}, fmt.Errorf("%s: %w", errGetLastApplied, err)
 		}
 		return c.handleLastApplied(ctx, lastParameters, cr)
 	case "CheckWhenObserve":
@@ -399,7 +426,7 @@ func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleR
 	}
 	lastParameters := &v1alpha1.AnsibleRunParameters{}
 	if err := json.Unmarshal([]byte(lastApplied), lastParameters); err != nil {
-		return nil, errors.Wrap(err, errUnmarshalTemplate)
+		return nil, fmt.Errorf("%s: %w", errUnmarshalTemplate, err)
 	}
 
 	return lastParameters, nil

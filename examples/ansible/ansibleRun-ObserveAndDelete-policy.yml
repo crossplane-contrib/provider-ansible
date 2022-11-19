@@ -25,6 +25,7 @@ spec:
         tasks:
           - name: create a gcp bucket
             google.cloud.gcp_storage_bucket:
+              # please make sure that name is unique
               name: ansible-storage-module
               project: test-project
               auth_kind: serviceaccount

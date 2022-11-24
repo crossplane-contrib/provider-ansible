@@ -31,7 +31,7 @@ either fetched from a remote source (e.g. git), or simply specified inline.
 ## Getting Started and Documentation
 
 For getting started guides, installation, deployment, and administration, check latest
-Crossplane [document](https://crossplane.io/docs/latest).
+Crossplane [document](https://crossplane.io/docs/).
 
 ## Contributing
 
@@ -89,7 +89,8 @@ make dev-clean
 ## Additional documents
 
 - [`GO`](https://tecadmin.net/install-go-on-debian/): install go1.19+ on debian
-- [`DOCKER`](https://docs.docker.com/engine/install/debian/): install docker on debian
+- [`DOCKER`](https://
+.docker.com/engine/install/debian/): install docker on debian
 
 ## Licensing
 

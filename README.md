@@ -89,8 +89,7 @@ make dev-clean
 ## Additional documents
 
 - [`GO`](https://tecadmin.net/install-go-on-debian/): install go1.19+ on debian
-- [`DOCKER`](https://
-.docker.com/engine/install/debian/): install docker on debian
+- [`DOCKER`](https://.docker.com/engine/install/debian/): install docker on debian
 
 ## Licensing
 

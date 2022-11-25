@@ -1,0 +1,20 @@
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: AnsibleRun
+metadata:
+  annotations:
+    ansible.crossplane.io/runPolicy: ObserveAndDelete
+  name: remote-debug
+spec:
+  forProvider:
+    inventoryInline: |
+      127.14.1.2
+    # AnsibleRun default to using a remote source.
+    # For simple cases you can use an inline source to specify the content of
+    # playbook.yaml as opaque, inline yaml.
+    playbookInline: |
+      ---
+      - hosts: all
+        tasks:
+          - name: ansibleplaybook-simple
+            debug:
+              msg: Your are running 'ansibleplaybook-simple' example

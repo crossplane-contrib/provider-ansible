@@ -32,16 +32,26 @@ type Role struct {
 
 // AnsibleRunParameters are the configurable fields of a AnsibleRun.
 type AnsibleRunParameters struct {
-	// The inline configuration of this AnsibleRun; the content of a simple playbook.yml file may be written inline.
-	// This field is mutually exclusive with the “role” field.
+	// The inline inventory of this AnsibleRun; the content of inventory file may be written inline.
+	// +optional
+	InventoryInline *string `json:"inventoryInline"`
+
+	// The Inventories of this AnsibleRun.
+	// +optional
+	Inventories []Inventory `json:"inventories"`
+
+	// The inline configuration of this AnsibleRun;  the content of a simple playbook.yml file may be written inline.
+	// This field is mutually exclusive with the “roles” field.
 	// +optional
 	PlaybookInline *string `json:"playbookInline"`
 
 	// The remote configuration of this AnsibleRun; the content can be retrieved from Ansible Galaxy as community contents
+	// This field is mutually exclusive with the “Playbooks” and/or "PlaybookInline" fields.
 	// +optional
 	Roles []Role `json:"roles"`
 
 	// The remote configuration of this AnsibleRun; the content can be retrieved from Ansible Galaxy as community contents
+	// This field is mutually exclusive with the “roles” field.
 	// +optional
 	Playbooks []string `json:"playbooks"`
 
@@ -49,6 +59,20 @@ type AnsibleRunParameters struct {
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
 	Vars runtime.RawExtension `json:"vars,omitempty"`
+}
+
+// Inventory required to configure ansible inventory.
+type Inventory struct {
+
+	// Filename to which these inventory
+	// should be written.
+	Filename string `json:"filename"`
+
+	// Source of the inventory.
+	// +kubebuilder:validation:Enum=None;Secret;InjectedIdentity;Environment;Filesystem
+	Source xpv1.CredentialsSource `json:"source"`
+
+	xpv1.CommonCredentialSelectors `json:",inline"`
 }
 
 // AnsibleRunObservation are the observable fields of a AnsibleRun.

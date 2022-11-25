@@ -23,8 +23,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"errors"
+	"fmt"
+
 	"github.com/google/go-cmp/cmp"
-	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -37,6 +39,10 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
+)
+
+const (
+	uid = types.UID("no-you-id")
 )
 
 type ErrFs struct {
@@ -61,13 +67,13 @@ func (e *ErrFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, e
 }
 
 type MockPs struct {
-	MockInit          func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error)
+	MockInit          func(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error)
 	MockGalaxyInstall func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error
 	MockAddFile       func(path string, content []byte) error
 }
 
-func (ps MockPs) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error) {
-	return ps.MockInit(ctx, cr, pc, behaviorVars)
+func (ps MockPs) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
+	return ps.MockInit(ctx, cr, behaviorVars)
 }
 
 func (ps MockPs) GalaxyInstall(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
@@ -103,7 +109,6 @@ func (r MockRunner) EnableCheckMode(checkMode bool) {
 
 func TestConnect(t *testing.T) {
 	errBoom := errors.New("boom")
-	uid := types.UID("no-you-id")
 	pbCreds := "credentials"
 	requirements := "fakeRequirements"
 	inlineYaml := "IamYaml"
@@ -150,7 +155,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 				},
 			},
-			want: errors.Wrap(errBoom, errMkdir),
+			want: fmt.Errorf("%s: %s: %w", baseWorkingDir, errMkdir, errBoom),
 		},
 		"TrackUsageError": {
 			reason: "We should return any error encountered while tracking ProviderConfig usage",
@@ -163,7 +168,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 				},
 			},
-			want: errors.Wrap(errBoom, errTrackPCUsage),
+			want: fmt.Errorf("%s: %w", errTrackPCUsage, errBoom),
 		},
 		"GetProviderConfigError": {
 			reason: "We should return any error encountered while getting our ProviderConfig",
@@ -184,7 +189,7 @@ func TestConnect(t *testing.T) {
 					},
 				},
 			},
-			want: errors.Wrap(errBoom, errGetPC),
+			want: fmt.Errorf("%s: %w", errGetPC, errBoom),
 		},
 		"GetProviderConfigCredentialsError": {
 			reason: "We should return any error encountered while getting our ProviderConfig credentials",
@@ -216,7 +221,7 @@ func TestConnect(t *testing.T) {
 					},
 				},
 			},
-			want: errors.Wrap(errors.New("cannot extract from environment variable when none specified"), errGetCreds),
+			want: fmt.Errorf("%s: %w", errGetCreds, errors.New("cannot extract from environment variable when none specified")),
 		},
 		"WriteProviderConfigCredentialsError": {
 			reason: "We should return any error encountered while writing our ProviderConfig credentials to a file",
@@ -250,7 +255,7 @@ func TestConnect(t *testing.T) {
 					},
 				},
 			},
-			want: errors.Wrap(errBoom, errWriteCreds),
+			want: fmt.Errorf("%s: %w", errWriteCreds, errBoom),
 		},
 		"WriteProviderGitCredentialsError": {
 			reason: "We should return any error encountered while writing our git credentials to a file",
@@ -289,7 +294,7 @@ func TestConnect(t *testing.T) {
 					},
 				},
 			},
-			want: errors.Wrap(errBoom, errWriteGitCreds),
+			want: fmt.Errorf("%s: %w", errWriteGitCreds, errBoom),
 		},
 		"WritePlaybookError": {
 			reason: "We should return any error encountered while writing our playbook.yml file",
@@ -318,7 +323,36 @@ func TestConnect(t *testing.T) {
 					},
 				},
 			},
-			want: errors.Wrap(errBoom, errWriteAnsibleRun),
+			want: fmt.Errorf("%s: %w", errWriteAnsibleRun, errBoom),
+		},
+		"WriteInventoryError": {
+			reason: "We should return any error encountered while writing our Inventory file",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil),
+				},
+				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				fs: afero.Afero{
+					Fs: &ErrFs{
+						Fs:   afero.NewMemMapFs(),
+						errs: map[string]error{filepath.Join(baseWorkingDir, string(uid), runnerutil.Hosts): errBoom},
+					},
+				},
+			},
+			args: args{
+				mg: &v1alpha1.AnsibleRun{
+					ObjectMeta: metav1.ObjectMeta{UID: uid},
+					Spec: v1alpha1.AnsibleRunSpec{
+						ResourceSpec: xpv1.ResourceSpec{
+							ProviderConfigReference: &xpv1.Reference{},
+						},
+						ForProvider: v1alpha1.AnsibleRunParameters{
+							InventoryInline: &inlineYaml,
+						},
+					},
+				},
+			},
+			want: fmt.Errorf("%s %s: %w", errWriteInventory, runnerutil.Hosts, errBoom),
 		},
 		"AnsibleInitError": {
 			reason: "We should return any error encountered while initializing ansible-runner cli",
@@ -330,7 +364,7 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error) {
+						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
 							return nil, errBoom
 						},
 						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
@@ -352,7 +386,7 @@ func TestConnect(t *testing.T) {
 					},
 				},
 			},
-			want: errors.Wrap(errBoom, errInit),
+			want: fmt.Errorf("%s: %w", errInit, errBoom),
 		},
 		"AnsibleGalaxyError": {
 			reason: "We should return any error encountered while installing ansible requirements",
@@ -369,7 +403,7 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error) {
+						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
 						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
@@ -403,7 +437,7 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*ansible.Runner, error) {
+						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
 						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
@@ -508,7 +542,7 @@ func TestObserve(t *testing.T) {
 				mg: &v1alpha1.AnsibleRun{},
 			},
 			want: want{
-				err: errors.Wrap(errBoom, errGetAnsibleRun),
+				err: fmt.Errorf("%s: %w", errGetAnsibleRun, errBoom),
 			},
 		},
 		"GetObservedErrorWhenCheckWhenObservePolicy": {

@@ -111,7 +111,7 @@ spec:
                   fetching Roles
                 type: string
               vars:
-                description: Vars are used to to customize Ansible default behavior.
+                description: Vars are used to customize the provider default behavior.
                 items:
                   description: A Var represents key/value variable.
                   properties:

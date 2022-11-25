@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
-	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 	"gotest.tools/v3/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -105,8 +104,7 @@ func TestAnsibleRunPolicyInit(t *testing.T) {
 				WorkingDirPath: ansibleCtx,
 			}
 
-			pc := v1alpha1.ProviderConfig{}
-			testRunner, err := ps.Init(ctx, &cr, &pc, nil)
+			testRunner, err := ps.Init(ctx, &cr, nil)
 			if err != nil {
 				t.Fatalf("Error occurred unexpectedly: %v", err)
 			}
@@ -123,26 +121,5 @@ func TestAnsibleRunPolicyInit(t *testing.T) {
 			}
 
 		})
-	}
-}
-
-// TestAnsibleVerbosityString from https://github.com/operator-framework/operator-sdk/blob/v1.18.1/internal/ansible/runner/runner_test.go#L228-L246
-func TestAnsibleVerbosityString(t *testing.T) {
-	testCases := []struct {
-		verbosity      int
-		expectedString string
-	}{
-		{verbosity: -1, expectedString: ""},
-		{verbosity: 0, expectedString: ""},
-		{verbosity: 1, expectedString: "-v"},
-		{verbosity: 2, expectedString: "-vv"},
-		{verbosity: 7, expectedString: "-vvvvvvv"},
-	}
-
-	for _, tc := range testCases {
-		gotString := runnerutil.AnsibleVerbosityString(tc.verbosity)
-		if tc.expectedString != gotString {
-			t.Fatalf("Unexpected string %v for  expected %v from verbosity %v", gotString, tc.expectedString, tc.verbosity)
-		}
 	}
 }

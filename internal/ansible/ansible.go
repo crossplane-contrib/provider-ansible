@@ -25,7 +25,7 @@ import (
 	"os/user"
 	"path/filepath"
 
-	"github.com/pkg/errors"
+	"errors"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
@@ -41,10 +41,13 @@ const (
 	AnsibleRolesPath = "ANSIBLE_ROLE_PATH"
 	// AnsibleCollectionsPath is key defined by the user
 	AnsibleCollectionsPath = "ANSIBLE_COLLECTION_PATH"
+	// AnsibleInventoryPath is key defined by the user
+	AnsibleInventoryPath = "ANSIBLE_INVENTORY"
 )
 
 const (
 	errMarshalContentVars = "cannot marshal ContentVars into yaml document"
+	errMkdir              = "cannot make directory"
 )
 
 const (
@@ -118,24 +121,10 @@ func withCmdFunc(cmdFunc cmdFuncType) runnerOption {
 	}
 }
 
-// withAnsibleVerbosity set the runner verbosity.
-func withAnsibleVerbosity(verbosity int) runnerOption {
+// withBehaviorVars set the runner behavior vars.
+func withBehaviorVars(behaviorVars map[string]string) runnerOption {
 	return func(r *Runner) {
-		r.ansibleVerbosity = verbosity
-	}
-}
-
-// withAnsibleGathering set the runner default policy of fact gathering.
-func withAnsibleGathering(gathering string) runnerOption {
-	return func(r *Runner) {
-		r.ansibleGathering = gathering
-	}
-}
-
-// withAnsibleHosts set the runner hosts to execute against.
-func withAnsibleHosts(hosts string) runnerOption {
-	return func(r *Runner) {
-		r.ansibleHosts = hosts
+		r.behaviorVars = behaviorVars
 	}
 }
 
@@ -153,11 +142,11 @@ func withAnsibleRunPolicy(p *RunPolicy) runnerOption {
 	}
 }
 
-type cmdFuncType func(gathering string, hosts string, verbosity int, checkMode bool) *exec.Cmd
+type cmdFuncType func(behaviorVars map[string]string, checkMode bool) *exec.Cmd
 
 // playbookCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L75-L90
 func (p Parameters) playbookCmdFunc(ctx context.Context, playbookName string, path string) cmdFuncType {
-	return func(_ string, _ string, verbosity int, checkMode bool) *exec.Cmd {
+	return func(behaviorVars map[string]string, checkMode bool) *exec.Cmd {
 		cmdArgs := []string{"run", path}
 		cmdOptions := []string{
 			"-p", playbookName,
@@ -166,51 +155,55 @@ func (p Parameters) playbookCmdFunc(ctx context.Context, playbookName string, pa
 		if checkMode {
 			cmdOptions = append(cmdOptions, "--cmdline", "\\--check")
 		}
-		// check the verbosity since the exec.Command will fail if an arg as "" or " " be informed
-		if verbosity > 0 {
-			cmdOptions = append(cmdOptions, runnerutil.AnsibleVerbosityString(verbosity))
-		}
 		// gosec is disabled here because of G204. We should pay attention that user can't
 		// make command injection via command argument
-		return exec.CommandContext(ctx, p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+		dc := exec.CommandContext(ctx, p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+
+		behaviorVarsSlice := runnerutil.ConvertMapToSlice(behaviorVars)
+
+		// Provider dc with envVar, priority is for behaviorVarsSlice over os env vars
+		dc.Env = append(dc.Env, os.Environ()...)
+		dc.Env = append(dc.Env, behaviorVarsSlice...)
+
+		// override or omit envVar that may disturb the dc execution
+		dc.Env = append(dc.Env, fmt.Sprintf("%s=%s", AnsibleInventoryPath, runnerutil.Hosts))
+
+		return dc
 	}
 }
 
 // roleCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L92-L118
 func (p Parameters) roleCmdFunc(ctx context.Context, roleName string, path string) cmdFuncType {
-	return func(gathering string, hosts string, verbosity int, checkMode bool) *exec.Cmd {
+	return func(behaviorVars map[string]string, checkMode bool) *exec.Cmd {
+		cmdArgs := []string{"run", filepath.Join(path, roleName)}
 		cmdOptions := []string{
 			"--role", roleName,
-			"--hosts", hosts,
 		}
-		cmdArgs := []string{"run", filepath.Join(path, roleName)}
 		// enable check mode via cmdline https://github.com/ansible/ansible-runner/issues/580
 		if checkMode {
 			cmdOptions = append(cmdOptions, "--cmdline", "\\--check")
 		}
-		// check the verbosity since the exec.Command will fail if an arg as "" or " " be informed
-		if verbosity > 0 {
-			cmdOptions = append(cmdOptions, runnerutil.AnsibleVerbosityString(verbosity))
-		}
-		// ansibleGathering := os.Getenv("ANSIBLE_GATHERING")
-
-		// When running a role directly, ansible-runner does not respect the ANSIBLE_GATHERING
-		// environment variable, so we need to skip fact collection manually
-		if gathering == "explicit" {
-			cmdOptions = append(cmdOptions, "--role-skip-facts")
-		}
-
 		// gosec is disabled here because of G204. We should pay attention that user can't
 		// make command injection via command argument
-		return exec.CommandContext(ctx, p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+		dc := exec.CommandContext(ctx, p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+
+		behaviorVarsSlice := runnerutil.ConvertMapToSlice(behaviorVars)
+
+		// Provider dc with envVar, priority is for behaviorVarsSlice over os env vars
+		dc.Env = append(dc.Env, os.Environ()...)
+		dc.Env = append(dc.Env, behaviorVarsSlice...)
+
+		// override or omit envVar that may disturb the dc execution
+		// TODO: check if ANSIBLE_INVENTORY is useless when applying role ?
+		dc.Env = append(dc.Env, fmt.Sprintf("%s=%s", filepath.Join(p.WorkingDirPath, AnsibleInventoryPath), runnerutil.Hosts))
+		return dc
 	}
 }
 
 // GalaxyInstall Install non-exists collections/roles with ansible-galaxy cli
 func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
 	requirementsFilePath := runnerutil.GetFullPath(p.WorkingDirPath, galaxyutil.RequirementsFile)
-	var cmdArgs []string
-	var cmdOptions []string
+	var cmdArgs, cmdOptions []string
 	switch requirementsType {
 	case "collection":
 		cmdArgs = []string{"collection", "install"}
@@ -222,15 +215,11 @@ func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]s
 		cmdOptions = []string{
 			"--role-file", requirementsFilePath,
 		}
-		/* By default, Ansible downloads roles to the first writable directory in the default list of paths:
-		   ~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles
-		   this can be override by behaviorVars[AnsibleRolesPath] or p.RolesPath
-		*/
-		if behaviorVars[AnsibleRolesPath] != "" {
-			cmdOptions = append(cmdOptions, []string{"--roles-path", behaviorVars[AnsibleRolesPath]}...)
-		} else if p.RolesPath != "" {
-			cmdOptions = append(cmdOptions, []string{"--roles-path", p.RolesPath}...)
+		rolePath, err := selectRolePath(p, behaviorVars)
+		if err != nil {
+			return err
 		}
+		cmdOptions = append(cmdOptions, []string{"--roles-path", rolePath}...)
 
 	}
 	// ansible-galaxy is by default verbose
@@ -239,6 +228,7 @@ func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]s
 	// gosec is disabled here because of G204. We should pay attention that user can't
 	// make command injection via command argument
 	dc := exec.CommandContext(ctx, p.GalaxyBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+	dc.Env = append(dc.Env, os.Environ()...)
 
 	out, err := dc.CombinedOutput()
 	if err != nil {
@@ -249,9 +239,14 @@ func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]s
 
 // Init initializes a new runner from parameters
 // nolint: gocyclo
-func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alpha1.ProviderConfig, behaviorVars map[string]string) (*Runner, error) {
+func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*Runner, error) {
 	var cmdFunc cmdFuncType
-	var err error
+	/*
+		    path can be either the working Directory or an other folder:
+				- for inline mode, path is always the working directory
+				- for remote mode, path can be different from working directory
+			working directory  should contains all ansible content that is 100% controllable (playbooks, roles, inventories)
+	*/
 	var path, ansibleEnvDir string
 
 	switch {
@@ -267,24 +262,25 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alp
 		ansibleEnvDir = filepath.Clean(filepath.Join(path, "env"))
 	case len(cr.Spec.ForProvider.Roles) != 0:
 		var err error
-		path, err = addRolePath(p, behaviorVars)
+		path, err = selectRolePath(p, behaviorVars)
 		if err != nil {
 			return nil, err
 		}
 		// TODO support multiple roles execution
 		cmdFunc = p.roleCmdFunc(ctx, cr.Spec.ForProvider.Roles[0].Name, path)
 		// init ansible env dir
+		// TODO ansibleEnvDir should be under the WorkingDirPath because it is 100% controllable
 		ansibleEnvDir = filepath.Clean(filepath.Join(path, cr.Spec.ForProvider.Roles[0].Name, "env"))
 	}
 
 	// prepare ansible runner extravars
 	// create extravars file even empty. We need the extravars file later to handle status variables
 	if err := os.MkdirAll(ansibleEnvDir, 0700); resource.Ignore(os.IsExist, err) != nil {
-		return nil, errors.Wrap(err, "cannot make Playbook directory")
+		return nil, fmt.Errorf("%s: %s: %w", ansibleEnvDir, errMkdir, err)
 	}
 	contentVarsBytes, err := cr.Spec.ForProvider.Vars.MarshalJSON()
 	if err != nil {
-		return nil, errors.Wrap(err, errMarshalContentVars)
+		return nil, fmt.Errorf("%s: %w", errMarshalContentVars, err)
 	}
 	if string(contentVarsBytes) == "null" {
 		contentVarsBytes = nil
@@ -297,26 +293,21 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, pc *v1alp
 	if err != nil {
 		return nil, err
 	}
+
 	return new(withPath(path),
 		withCmdFunc(cmdFunc),
-		// TODO add verbosity filed to the API, now it is ignored by (0) value
-		withAnsibleVerbosity(0),
-		withAnsibleGathering(behaviorVars["ANSIBLE_GATHERING"]),
-		// TODO hosts should be handled via configuration vars e.g: vars["hosts"]
-		withAnsibleHosts("localhost"),
+		withBehaviorVars(behaviorVars),
 		withAnsibleRunPolicy(rPolicy),
+		// TODO should be moved to connect() func
 		withAnsibleEnvDir(ansibleEnvDir),
 	), nil
 }
 
-// Runner struct
+// Runner struct holds the configuration to run the cmdFunc
 type Runner struct {
 	Path             string // absolute path on disk to a playbook or role depending on what cmdFunc expects
 	behaviorVars     map[string]string
 	cmdFunc          cmdFuncType // returns a Cmd that runs ansible-runner
-	ansibleVerbosity int
-	ansibleGathering string
-	ansibleHosts     string
 	AnsibleEnvDir    string
 	checkMode        bool
 	AnsibleRunPolicy *RunPolicy
@@ -341,13 +332,7 @@ func (r *Runner) GetAnsibleRunPolicy() *RunPolicy {
 
 // Run execute the appropriate cmdFunc
 func (r *Runner) Run() (*exec.Cmd, error) {
-	dc := r.cmdFunc(r.ansibleGathering, r.ansibleHosts, r.ansibleVerbosity, r.checkMode)
-	behaviorVarsSlice := runnerutil.ConvertMapToSlice(r.behaviorVars)
-	// Append current environment since setting dc.Env to anything other than nil overwrites current env
-	// Some behaviorVars are not assessed because they are actually passed to cmd as flag
-	dc.Env = append(dc.Env, os.Environ()...)
-	dc.Env = append(dc.Env, behaviorVarsSlice...)
-
+	dc := r.cmdFunc(r.behaviorVars, r.checkMode)
 	dc.Stdout = os.Stdout
 	dc.Stderr = os.Stderr
 
@@ -359,14 +344,24 @@ func (r *Runner) Run() (*exec.Cmd, error) {
 	return dc, nil
 }
 
-// addRolePath will determines the role path
-func addRolePath(p Parameters, behaviorVars map[string]string) (string, error) {
-	var rolesPath string
+// selectRolePath will determines the role path
+func selectRolePath(p Parameters, behaviorVars map[string]string) (string, error) {
+	/*
+		role path lookup order:
+			1- behaviorVars
+			2- parameters
+			3- os environnement variables
+			4- Ansible default list of paths
+	*/
+	osRolesPath, present := os.LookupEnv(AnsibleRolesPath)
+	var rolePath string
 	switch {
 	case behaviorVars[AnsibleRolesPath] != "":
-		rolesPath = behaviorVars[AnsibleRolesPath]
+		rolePath = behaviorVars[AnsibleRolesPath]
 	case p.RolesPath != "":
-		rolesPath = p.RolesPath
+		rolePath = p.RolesPath
+	case present:
+		rolePath = osRolesPath
 	default:
 		// default Ansible Configuration
 		u, err := user.Current()
@@ -376,12 +371,12 @@ func addRolePath(p Parameters, behaviorVars map[string]string) (string, error) {
 		rolesPaths := []string{filepath.Clean(filepath.Join(u.HomeDir, ".ansible/roles")), "/usr/share/ansible/roles", "/etc/ansible/roles"}
 		for _, possiblePath := range rolesPaths {
 			if _, err := os.Stat(possiblePath); err == nil {
-				rolesPath = possiblePath
+				rolePath = possiblePath
 				break
 			}
 		}
 	}
-	return rolesPath, nil
+	return rolePath, nil
 }
 
 // addFile micmics https://github.com/operator-framework/operator-sdk/blob/master/internal/ansible/runner/internal/inputdir/inputdir.go#L55-L63

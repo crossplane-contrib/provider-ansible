@@ -17,23 +17,21 @@ limitations under the License.
 package controller
 
 import (
-	"k8s.io/client-go/util/workqueue"
-	ctrl "sigs.k8s.io/controller-runtime"
-
 	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
-	"github.com/crossplane/crossplane-runtime/pkg/logging"
+	"github.com/crossplane/crossplane-runtime/pkg/controller"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/crossplane-contrib/provider-ansible/internal/controller/config"
 )
 
 // Setup creates all Template controllers with the supplied logger and adds them to
 // the supplied manager.
-func Setup(mgr ctrl.Manager, l logging.Logger, wl workqueue.RateLimiter, ansibleCollectionsPath, ansibleRolesPath string) error {
-	for _, setup := range []func(ctrl.Manager, logging.Logger, workqueue.RateLimiter, string, string) error{
+func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string) error {
+	for _, setup := range []func(ctrl.Manager, controller.Options, string, string) error{
 		config.Setup,
 		ansiblerun.Setup,
 	} {
-		if err := setup(mgr, l, wl, ansibleCollectionsPath, ansibleRolesPath); err != nil {
+		if err := setup(mgr, o, ansibleCollectionsPath, ansibleRolesPath); err != nil {
 			return err
 		}
 	}

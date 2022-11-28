@@ -444,21 +444,6 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	}
 
 	if !isUpToDate {
-		stateVar := make(map[string]string)
-		stateVar["state"] = "present"
-		nestedMap := make(map[string]interface{})
-		nestedMap[desired.GetName()] = stateVar
-		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
-			return managed.ExternalObservation{}, err
-		}
-		dc, err := c.runner.Run()
-		if err != nil {
-			return managed.ExternalObservation{}, err
-		}
-		if err = dc.Wait(); err != nil {
-			return managed.ExternalObservation{}, err
-		}
-
 		out, err := json.Marshal(desired.Spec.ForProvider)
 		if err != nil {
 			return managed.ExternalObservation{}, err
@@ -471,6 +456,21 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 		desired.SetDeletionPolicy(xpv1.DeletionOrphan)
 
 		if err := c.kube.Update(ctx, desired); err != nil {
+			return managed.ExternalObservation{}, err
+		}
+
+		stateVar := make(map[string]string)
+		stateVar["state"] = "present"
+		nestedMap := make(map[string]interface{})
+		nestedMap[desired.GetName()] = stateVar
+		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
+			return managed.ExternalObservation{}, err
+		}
+		dc, err := c.runner.Run()
+		if err != nil {
+			return managed.ExternalObservation{}, err
+		}
+		if err = dc.Wait(); err != nil {
 			return managed.ExternalObservation{}, err
 		}
 	}

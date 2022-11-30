@@ -20,15 +20,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/crossplane-contrib/provider-ansible/apis"
+	ansible "github.com/crossplane-contrib/provider-ansible/internal/controller"
+	"github.com/crossplane/crossplane-runtime/pkg/controller"
+	"github.com/crossplane/crossplane-runtime/pkg/feature"
+	"github.com/crossplane/crossplane-runtime/pkg/logging"
+	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
 	"gopkg.in/alecthomas/kingpin.v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-
-	"github.com/crossplane/crossplane-runtime/pkg/logging"
-	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
-
-	"github.com/crossplane-contrib/provider-ansible/apis"
-	"github.com/crossplane-contrib/provider-ansible/internal/controller"
 )
 
 func main() {
@@ -38,7 +38,9 @@ func main() {
 		ansibleCollectionsPath = app.Flag("ansible-collections-path", "Path where ansible collections are installed.").String()
 		ansibleRolesPath       = app.Flag("ansible-roles-path", "Path where role(s) exists.").String()
 		syncPeriod             = app.Flag("sync", "Controller manager sync period such as 300ms, 1.5h, or 2h45m").Short('s').Default("1h").Duration()
+		pollInterval           = app.Flag("poll", "Poll interval controls how often an individual resource should be checked for drift.").Default("1m").Duration()
 		leaderElection         = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").OverrideDefaultFromEnvar("LEADER_ELECTION").Bool()
+		maxReconcileRate       = app.Flag("max-reconcile-rate", "The maximum number of concurrent reconciliation operations.").Default("1").Int()
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -63,8 +65,16 @@ func main() {
 	})
 	kingpin.FatalIfError(err, "Cannot create controller manager")
 
-	rl := ratelimiter.NewDefaultProviderRateLimiter(ratelimiter.DefaultProviderRPS)
 	kingpin.FatalIfError(apis.AddToScheme(mgr.GetScheme()), "Cannot add Ansible APIs to scheme")
-	kingpin.FatalIfError(controller.Setup(mgr, log, rl, *ansibleCollectionsPath, *ansibleRolesPath), "Cannot setup Ansible controllers")
+
+	o := controller.Options{
+		Logger:                  log,
+		MaxConcurrentReconciles: *maxReconcileRate,
+		PollInterval:            *pollInterval,
+		GlobalRateLimiter:       ratelimiter.NewGlobal(*maxReconcileRate),
+		Features:                &feature.Flags{},
+	}
+
+	kingpin.FatalIfError(ansible.Setup(mgr, o, *ansibleCollectionsPath, *ansibleRolesPath), "Cannot setup Ansible controllers")
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
 }

@@ -33,8 +33,8 @@ import (
 	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
 	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/pkg/event"
-	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
@@ -45,10 +45,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
 )
 
 const (
@@ -90,12 +88,8 @@ type ansibleRunner interface {
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
-func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, ansibleCollectionsPath, ansibleRolesPath string) error {
+func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string) error {
 	name := managed.ControllerName(v1alpha1.AnsibleRunGroupKind)
-
-	o := controller.Options{
-		RateLimiter: ratelimiter.NewDefaultManagedRateLimiter(rl),
-	}
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 
@@ -126,14 +120,14 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, ansible
 	r := managed.NewReconciler(mgr,
 		resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind),
 		managed.WithExternalConnecter(c),
-		managed.WithLogger(l.WithValues("controller", name)),
+		managed.WithLogger(o.Logger.WithValues("controller", name)),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))))
 
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(name).
-		WithOptions(o).
+		WithOptions(o.ForControllerRuntime()).
 		For(&v1alpha1.AnsibleRun{}).
-		Complete(r)
+		Complete(ratelimiter.NewReconciler(name, r, o.GlobalRateLimiter))
 }
 
 // A connector is expected to produce an ExternalClient when its Connect method

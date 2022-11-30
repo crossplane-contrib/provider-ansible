@@ -68,10 +68,6 @@ spec:
                           required:
                           - name
                           type: object
-                        filename:
-                          description: Filename to which these inventory should be
-                            written.
-                          type: string
                         fs:
                           description: Fs is a reference to a filesystem location
                             that contains credentials that must be used to connect
@@ -112,7 +108,6 @@ spec:
                           - Filesystem
                           type: string
                       required:
-                      - filename
                       - source
                       type: object
                     type: array

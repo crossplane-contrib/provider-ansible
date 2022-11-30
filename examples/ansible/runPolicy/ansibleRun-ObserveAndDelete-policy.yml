@@ -42,7 +42,7 @@ metadata:
   name: gcp-credentials
 type: Opaque
 data:
-  credentials: BASE64ENCODED_PROVIDER_CREDS
+  credentials: QkFTRTY0RU5DT0RFRF9QUk9WSURFUl9DUkVEUw==
 ---
 apiVersion: ansible.crossplane.io/v1alpha1
 kind: ProviderConfig

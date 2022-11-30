@@ -63,11 +63,6 @@ type AnsibleRunParameters struct {
 
 // Inventory required to configure ansible inventory.
 type Inventory struct {
-
-	// Filename to which these inventory
-	// should be written.
-	Filename string `json:"filename"`
-
 	// Source of the inventory.
 	// +kubebuilder:validation:Enum=None;Secret;InjectedIdentity;Environment;Filesystem
 	Source xpv1.CredentialsSource `json:"source"`

@@ -1,9 +1,7 @@
 apiVersion: ansible.crossplane.io/v1alpha1
 kind: AnsibleRun
 metadata:
-  annotations:
-    ansible.crossplane.io/runPolicy: ObserveAndDelete
-  name: remote-debug
+  name: inline-inventory-remote-debug
 spec:
   forProvider:
     inventoryInline: |

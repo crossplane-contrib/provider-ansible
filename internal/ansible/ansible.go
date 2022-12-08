@@ -17,15 +17,16 @@ limitations under the License.
 package ansible
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
-
-	"errors"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
@@ -330,18 +331,20 @@ func (r *Runner) GetAnsibleRunPolicy() *RunPolicy {
 	return r.AnsibleRunPolicy
 }
 
-// Run execute the appropriate cmdFunc
-func (r *Runner) Run() (*exec.Cmd, error) {
+// Cmd to be started
+func (r *Runner) Cmd() (*exec.Cmd, io.Reader) {
 	dc := r.cmdFunc(r.behaviorVars, r.checkMode)
-	dc.Stdout = os.Stdout
-	dc.Stderr = os.Stderr
 
-	err := dc.Start()
-	if err != nil {
-		return nil, err
-	}
+	// dc.Stdout and dc.Stderr are respectfully written to os.Stdout and os.Stdout for debugging purpose
+	// dc.Stdout is buffered for stream result parsing purposes.
+	// we cannot parse os.Stdout because the main process is writing to them
+	var stdoutBuf bytes.Buffer
+	stdoutWriter := io.MultiWriter(&stdoutBuf, os.Stdout)
+	stderrWriter := os.Stderr
+	dc.Stdout = stdoutWriter
+	dc.Stderr = stderrWriter
 
-	return dc, nil
+	return dc, &stdoutBuf
 }
 
 // selectRolePath will determines the role path

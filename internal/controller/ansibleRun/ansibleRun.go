@@ -85,7 +85,7 @@ type ansibleRunner interface {
 	GetAnsibleRunPolicy() *ansible.RunPolicy
 	WriteExtraVar(extraVar map[string]interface{}) error
 	EnableCheckMode(checkMode bool)
-	Run() (*exec.Cmd, error)
+	Cmd() (*exec.Cmd, io.Reader)
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
@@ -337,35 +337,16 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		c.runner.EnableCheckMode(true)
-		var (
-			resChan = make(chan *results.AnsiblePlaybookJSONResults)
-			errChan = make(chan error, 1)
-		)
-
-		processResultsStreamFunc := func(stdout io.Reader, resChan chan *results.AnsiblePlaybookJSONResults, errChan chan error) {
-			result, err := results.ParseJSONResultsStream(stdout)
-			if err != nil {
-				errChan <- err
-			}
-			resChan <- result
-		}
-		go processResultsStreamFunc(os.Stdout, resChan, errChan)
-
-		dc, err := c.runner.Run()
+		dc, stdoutBuf := c.runner.Cmd()
+		err := dc.Start()
 		if err != nil {
 			return managed.ExternalObservation{}, err
 		}
-
-		/*if err = dc.Wait(); err != nil {
+		res, err := results.ParseJSONResultsStream(stdoutBuf)
+		if err != nil {
 			return managed.ExternalObservation{}, err
-		}*/
-
-		var res *results.AnsiblePlaybookJSONResults
-		select {
-		case res = <-resChan:
-			dc.Process.Kill()
-		case err = <-errChan:
+		}
+		if err = dc.Wait(); err != nil {
 			return managed.ExternalObservation{}, err
 		}
 
@@ -397,11 +378,8 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 
 	// disable checkMode for real action
 	c.runner.EnableCheckMode(false)
-	dc, err := c.runner.Run()
-	if err != nil {
-		return managed.ExternalUpdate{}, err
-	}
-	if err = dc.Wait(); err != nil {
+	dc, _ := c.runner.Cmd()
+	if err := dc.Run(); err != nil {
 		return managed.ExternalUpdate{}, err
 	}
 
@@ -424,11 +402,8 @@ func (c *external) Delete(_ context.Context, mg resource.Managed) error {
 	if err := c.runner.WriteExtraVar(nestedMap); err != nil {
 		return err
 	}
-	dc, err := c.runner.Run()
-	if err != nil {
-		return err
-	}
-	if err = dc.Wait(); err != nil {
+	dc, _ := c.runner.Cmd()
+	if err := dc.Run(); err != nil {
 		return err
 	}
 	return nil
@@ -481,11 +456,8 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		dc, err := c.runner.Run()
-		if err != nil {
-			return managed.ExternalObservation{}, err
-		}
-		if err = dc.Wait(); err != nil {
+		dc, _ := c.runner.Cmd()
+		if err := dc.Run(); err != nil {
 			return managed.ExternalObservation{}, err
 		}
 	}

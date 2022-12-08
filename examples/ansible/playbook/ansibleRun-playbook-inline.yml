@@ -1,6 +1,8 @@
 apiVersion: ansible.crossplane.io/v1alpha1
 kind: AnsibleRun
 metadata:
+  annotations:
+    ansible.crossplane.io/runPolicy: CheckWhenObserve
   name: example
 spec:
   forProvider:

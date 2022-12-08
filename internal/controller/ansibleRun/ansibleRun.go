@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -337,17 +338,37 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 			return managed.ExternalObservation{}, err
 		}
 		c.runner.EnableCheckMode(true)
+		var (
+			resChan = make(chan *results.AnsiblePlaybookJSONResults)
+			errChan = make(chan error, 1)
+		)
+
+		processResultsStreamFunc := func(stdout io.Reader, resChan chan *results.AnsiblePlaybookJSONResults, errChan chan error) {
+			result, err := results.ParseJSONResultsStream(stdout)
+			if err != nil {
+				errChan <- err
+			}
+			resChan <- result
+		}
+		go processResultsStreamFunc(os.Stdout, resChan, errChan)
+
 		dc, err := c.runner.Run()
 		if err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		res, err := results.ParseJSONResultsStream(os.Stdout)
-		if err != nil {
+
+		/*if err = dc.Wait(); err != nil {
+			return managed.ExternalObservation{}, err
+		}*/
+
+		var res *results.AnsiblePlaybookJSONResults
+		select {
+		case res = <-resChan:
+			dc.Process.Kill()
+		case err = <-errChan:
 			return managed.ExternalObservation{}, err
 		}
-		if err = dc.Wait(); err != nil {
-			return managed.ExternalObservation{}, err
-		}
+
 		changes, exists := ansible.Diff(res)
 
 		return managed.ExternalObservation{

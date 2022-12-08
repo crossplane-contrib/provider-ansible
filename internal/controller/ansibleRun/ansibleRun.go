@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,7 +85,7 @@ type ansibleRunner interface {
 	GetAnsibleRunPolicy() *ansible.RunPolicy
 	WriteExtraVar(extraVar map[string]interface{}) error
 	EnableCheckMode(checkMode bool)
-	Run() (*exec.Cmd, error)
+	Run() (*exec.Cmd, io.Reader, error)
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
@@ -337,11 +338,11 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 			return managed.ExternalObservation{}, err
 		}
 		c.runner.EnableCheckMode(true)
-		dc, err := c.runner.Run()
+		dc, stdoutBuf, err := c.runner.Run()
 		if err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		res, err := results.ParseJSONResultsStream(os.Stdout)
+		res, err := results.ParseJSONResultsStream(stdoutBuf)
 		if err != nil {
 			return managed.ExternalObservation{}, err
 		}
@@ -376,7 +377,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 
 	// disable checkMode for real action
 	c.runner.EnableCheckMode(false)
-	dc, err := c.runner.Run()
+	dc, _, err := c.runner.Run()
 	if err != nil {
 		return managed.ExternalUpdate{}, err
 	}
@@ -403,7 +404,7 @@ func (c *external) Delete(_ context.Context, mg resource.Managed) error {
 	if err := c.runner.WriteExtraVar(nestedMap); err != nil {
 		return err
 	}
-	dc, err := c.runner.Run()
+	dc, _, err := c.runner.Run()
 	if err != nil {
 		return err
 	}
@@ -460,7 +461,7 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		dc, err := c.runner.Run()
+		dc, _, err := c.runner.Run()
 		if err != nil {
 			return managed.ExternalObservation{}, err
 		}

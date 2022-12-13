@@ -1,6 +1,6 @@
-FROM alpinelinux/ansible
-RUN apk --no-cache add ca-certificates bash
-RUN pip3 install ansible-runner
+FROM python:3.10-alpine3.17
+RUN apk --no-cache add ca-certificates bash openssh-client
+RUN python -m pip install ansible ansible-runner
 
 ARG TARGETOS
 ARG TARGETARCH

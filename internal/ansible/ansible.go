@@ -195,7 +195,7 @@ func (p Parameters) roleCmdFunc(ctx context.Context, roleName string, path strin
 
 		// override or omit envVar that may disturb the dc execution
 		// TODO: check if ANSIBLE_INVENTORY is useless when applying role ?
-		dc.Env = append(dc.Env, fmt.Sprintf("%s=%s", filepath.Join(p.WorkingDirPath, AnsibleInventoryPath), runnerutil.Hosts))
+		dc.Env = append(dc.Env, fmt.Sprintf("%s=%s", AnsibleInventoryPath, filepath.Join(p.WorkingDirPath, runnerutil.Hosts)))
 		return dc
 	}
 }

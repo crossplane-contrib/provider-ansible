@@ -175,9 +175,11 @@ func (p Parameters) playbookCmdFunc(ctx context.Context, playbookName string, pa
 // roleCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L92-L118
 func (p Parameters) roleCmdFunc(ctx context.Context, roleName string, path string) cmdFuncType {
 	return func(behaviorVars map[string]string, checkMode bool) *exec.Cmd {
-		cmdArgs := []string{"run", filepath.Join(path, roleName)}
+		cmdArgs := []string{"run", p.WorkingDirPath}
 		cmdOptions := []string{
 			"--role", roleName,
+			"--roles-path", path,
+			"--project-dir", p.WorkingDirPath,
 		}
 		// enable check mode via cmdline https://github.com/ansible/ansible-runner/issues/580
 		if checkMode {

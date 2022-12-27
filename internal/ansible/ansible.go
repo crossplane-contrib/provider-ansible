@@ -17,15 +17,16 @@ limitations under the License.
 package ansible
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
-
-	"errors"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
@@ -331,17 +332,33 @@ func (r *Runner) GetAnsibleRunPolicy() *RunPolicy {
 }
 
 // Run execute the appropriate cmdFunc
-func (r *Runner) Run() (*exec.Cmd, error) {
+func (r *Runner) Run() (*exec.Cmd, io.Reader, error) {
+	var (
+		stdoutBuf                  bytes.Buffer
+		stdoutWriter, stderrWriter io.Writer
+	)
+
 	dc := r.cmdFunc(r.behaviorVars, r.checkMode)
-	dc.Stdout = os.Stdout
-	dc.Stderr = os.Stderr
+	if !r.checkMode {
+		// for disabled checkMode dc.Stdout and dc.Stderr are respectfully
+		// written to os.Stdout and os.Stdout for debugging purpose
+		stdoutWriter = os.Stdout
+		stderrWriter = os.Stderr
+	} else {
+		// dc.Stdout is buffered into stdoutBuf for stream result parsing purposes.
+		// ansible-runner dry-run execution stdout is written only to stdoutBuf
+		// and not os.Stdout (we cannot parse os.Stdout because the main process is writing to it)
+		stdoutWriter = io.Writer(&stdoutBuf)
+	}
+	dc.Stdout = stdoutWriter
+	dc.Stderr = stderrWriter
 
 	err := dc.Start()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return dc, nil
+	return dc, &stdoutBuf, nil
 }
 
 // selectRolePath will determines the role path

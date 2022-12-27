@@ -260,8 +260,6 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 		// For inline mode playbook is stored in the predefined playbookYml file
 		path = p.WorkingDirPath
 		cmdFunc = p.playbookCmdFunc(ctx, runnerutil.PlaybookYml, path)
-		// init ansible env dir
-		ansibleEnvDir = filepath.Clean(filepath.Join(path, "env"))
 	case len(cr.Spec.ForProvider.Roles) != 0:
 		var err error
 		path, err = selectRolePath(p, behaviorVars)
@@ -270,10 +268,10 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 		}
 		// TODO support multiple roles execution
 		cmdFunc = p.roleCmdFunc(ctx, cr.Spec.ForProvider.Roles[0].Name, path)
-		// init ansible env dir
-		// TODO ansibleEnvDir should be under the WorkingDirPath because it is 100% controllable
-		ansibleEnvDir = filepath.Clean(filepath.Join(path, cr.Spec.ForProvider.Roles[0].Name, "env"))
 	}
+
+	// init ansible env dir
+	ansibleEnvDir = filepath.Clean(filepath.Join(p.WorkingDirPath, "env"))
 
 	// prepare ansible runner extravars
 	// create extravars file even empty. We need the extravars file later to handle status variables

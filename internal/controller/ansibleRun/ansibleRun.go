@@ -73,7 +73,7 @@ const (
 )
 
 const (
-	baseWorkingDir = "/ansibleDir"
+	baseWorkingDir = "/Users/faheddorgaa/ansibleDir"
 )
 
 type params interface {
@@ -349,10 +349,13 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		if err = dc.Wait(); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		changes, exists := ansible.Diff(res)
+		changes := ansible.Diff(res)
 
+		// At this level, the ansible cannot detect the existence or not of the external resource
+		// due to the lack of the state in the ansible technology. So we consider that the externl resource
+		// exists and trigger post-observation step(s) based on changes returned by the ansible stats
 		return managed.ExternalObservation{
-			ResourceExists:          exists,
+			ResourceExists:          true,
 			ResourceUpToDate:        !changes,
 			ResourceLateInitialized: false,
 		}, nil

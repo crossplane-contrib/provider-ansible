@@ -25,6 +25,7 @@ import (
 
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/afero"
@@ -85,13 +86,13 @@ func (ps MockPs) AddFile(path string, content []byte) error {
 }
 
 type MockRunner struct {
-	MockRun              func() (*exec.Cmd, error)
+	MockRun              func() (*exec.Cmd, io.Reader, error)
 	MockWriteExtraVar    func(extraVar map[string]interface{}) error
 	MockAnsibleRunPolicy func() *ansible.RunPolicy
 	MockEnableCheckMode  func(checkMode bool)
 }
 
-func (r MockRunner) Run() (*exec.Cmd, error) {
+func (r MockRunner) Run() (*exec.Cmd, io.Reader, error) {
 	return r.MockRun()
 }
 
@@ -557,8 +558,8 @@ func TestObserve(t *testing.T) {
 					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
 						return nil
 					},
-					MockRun: func() (*exec.Cmd, error) {
-						return nil, errBoom
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
+						return nil, nil, errBoom
 					},
 					MockEnableCheckMode: func(checkMode bool) {
 
@@ -634,8 +635,8 @@ func TestCreateOrUpdate(t *testing.T) {
 						}
 					},
 					MockEnableCheckMode: func(checkMode bool) {},
-					MockRun: func() (*exec.Cmd, error) {
-						return nil, errBoom
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
+						return nil, nil, errBoom
 					},
 				},
 			},
@@ -656,11 +657,11 @@ func TestCreateOrUpdate(t *testing.T) {
 						}
 					},
 					MockEnableCheckMode: func(checkMode bool) {},
-					MockRun: func() (*exec.Cmd, error) {
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
 						ctx := context.Background()
 						cmd := exec.CommandContext(ctx, "ls")
 						cmd.Start()
-						return cmd, nil
+						return cmd, nil, nil
 					},
 				},
 			},
@@ -679,8 +680,8 @@ func TestCreateOrUpdate(t *testing.T) {
 						}
 					},
 					MockEnableCheckMode: func(checkMode bool) {},
-					MockRun: func() (*exec.Cmd, error) {
-						return nil, errBoom
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
+						return nil, nil, errBoom
 					},
 				},
 			},
@@ -701,11 +702,11 @@ func TestCreateOrUpdate(t *testing.T) {
 						}
 					},
 					MockEnableCheckMode: func(checkMode bool) {},
-					MockRun: func() (*exec.Cmd, error) {
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
 						ctx := context.Background()
 						cmd := exec.CommandContext(ctx, "ls")
 						cmd.Start()
-						return cmd, nil
+						return cmd, nil, nil
 					},
 				},
 			},
@@ -787,8 +788,8 @@ func TestDelete(t *testing.T) {
 							Name: "ObserveAndDelete",
 						}
 					},
-					MockRun: func() (*exec.Cmd, error) {
-						return nil, errBoom
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
+						return nil, nil, errBoom
 					},
 				},
 			},
@@ -809,11 +810,11 @@ func TestDelete(t *testing.T) {
 							Name: "ObserveAndDelete",
 						}
 					},
-					MockRun: func() (*exec.Cmd, error) {
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
 						ctx := context.Background()
 						cmd := exec.CommandContext(ctx, "ls")
 						cmd.Start()
-						return cmd, nil
+						return cmd, nil, nil
 					},
 				},
 			},
@@ -834,8 +835,8 @@ func TestDelete(t *testing.T) {
 							Name: "CheckWhenObserve",
 						}
 					},
-					MockRun: func() (*exec.Cmd, error) {
-						return nil, errBoom
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
+						return nil, nil, errBoom
 					},
 				},
 			},
@@ -856,11 +857,11 @@ func TestDelete(t *testing.T) {
 							Name: "CheckWhenObserve",
 						}
 					},
-					MockRun: func() (*exec.Cmd, error) {
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
 						ctx := context.Background()
 						cmd := exec.CommandContext(ctx, "ls")
 						cmd.Start()
-						return cmd, nil
+						return cmd, nil, nil
 					},
 				},
 			},

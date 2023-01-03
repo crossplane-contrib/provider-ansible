@@ -433,8 +433,7 @@ func (r *Runner) WriteExtraVar(extraVar map[string]interface{}) error {
 
 // Diff parses `ansible-runner --check` json output to determine whether there is a diff between
 // the desired and the actual state of the configuration. It returns true if there is a diff.
-func Diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
-
+func Diff(res *results.AnsiblePlaybookJSONResults) bool {
 	var changes bool
 	// check changes for all hosts
 	for _, stats := range res.Stats {
@@ -443,51 +442,10 @@ func Diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
 			break
 		}
 	}
-
-	return changes, exists(res)
-}
-
-// Exists must be true if a corresponding external resource exists
-func exists(res *results.AnsiblePlaybookJSONResults) bool {
-	var resourcesExists bool
-	// check changes for all hosts
-	for _, stats := range res.Stats {
-		// We assume that if stats.Ok == stats.Changed { 0 resourcesexists }
-		if stats.Ok-stats.Changed > 0 {
-			resourcesExists = true
-			break
-		}
-	}
-	return resourcesExists
+	return changes
 }
 
 // EnableCheckMode enable the runner checkMode.
 func (r *Runner) EnableCheckMode(m bool) {
 	r.checkMode = m
 }
-
-// runWithCheckMode plays `ansible-runner` with check mode
-// then parse JSON stream results
-/*func (r *Runner) runWithCheckMode(ctx context.Context, mg resource.Managed) (bool, bool, error) {
-	// Enable the check flag
-	// Check don't make any changes; instead, try to predict some of the changes that may occur
-	pbCmd.Playbook.Options.Check = true
-	result, err := runAndParsePlaybook(ctx, pbCmd)
-	if err != nil {
-		return false, false, err
-	}
-	changes, re := diff(result)
-	return changes, re, nil
-}*/
-
-// CreateOrUpdate run playbook during  update or create
-/*func (pbCmd *PbCmd) CreateOrUpdate(ctx context.Context, mg resource.Managed) error {
-	err := pbCmd.Playbook.Run(ctx)
-	return err
-}*/
-
-// ParseCmdJsonOutput parse ansible-runner json output
-/*func ParseCmdJsonOutput(ctx context.Context, pbCmd *PbCmd) (*results.AnsiblePlaybookJSONResults, error) {
-	res, err := results.ParseJSONResultsStream(os.Stdout)
-	return res, err
-}*/

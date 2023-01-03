@@ -304,6 +304,11 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	if !ok {
 		return managed.ExternalObservation{}, errors.New(errNotAnsibleRun)
 	}
+	/* set Deletion Policy to Orphan as we cannot observe the external resource.
+	   So we won't wait for external resource deletion before attempting
+	   to delete the managed resource */
+	cr.SetDeletionPolicy(xpv1.DeletionOrphan)
+
 	switch c.runner.GetAnsibleRunPolicy().Name {
 	case "ObserveAndDelete", "":
 		if c.runner.GetAnsibleRunPolicy().Name == "" {
@@ -349,10 +354,13 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		if err = dc.Wait(); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		changes, exists := ansible.Diff(res)
+		changes := ansible.Diff(res)
 
+		// At this level, the ansible cannot detect the existence or not of the external resource
+		// due to the lack of the state in the ansible technology. So we consider that the externl resource
+		// exists and trigger post-observation step(s) based on changes returned by the ansible-runner stats
 		return managed.ExternalObservation{
-			ResourceExists:          exists,
+			ResourceExists:          true,
 			ResourceUpToDate:        !changes,
 			ResourceLateInitialized: false,
 		}, nil
@@ -447,13 +455,10 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 		meta.AddAnnotations(desired, map[string]string{
 			v1.LastAppliedConfigAnnotation: string(out),
 		})
-		// set Deletion Policy to Orphan for non-existence of external resource
-		desired.SetDeletionPolicy(xpv1.DeletionOrphan)
 
 		if err := c.kube.Update(ctx, desired); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-
 		stateVar := make(map[string]string)
 		stateVar["state"] = "present"
 		nestedMap := make(map[string]interface{})

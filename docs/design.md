@@ -97,21 +97,7 @@ spec:
 
 This is more useful for a real project where Ansible contents are hosted in a remote place. The Ansible contents can be retrieved from [Ansible Galaxy](https://galaxy.ansible.com/) as community contents, or Automation Hub as Red Hat certified and supported contents, or a private Automation Hub that hosts private contents created and curated by an organization, or even a GitHub repository.
 
-Here is an example to run an Ansible role that is included in a collection, using `spec.forProvider.role`:
-
-```yaml
-apiVersion: ansible.crossplane.io/v1alpha1
-kind: AnsibleRun
-metadata:
-  name: remote-example
-spec:
-  forProvider:
-    role: sample_namespace.sample_role
-  providerConfigRef:
-    name: provider-config-example
-```
-
-If multiple roles are listed using `spec.forProvider.roles`, they will be run sequencially one after another. At the time of writing this document, only single role execution is supported.
+Here is an example to run multiple Ansible roles listed using `spec.forProvider.roles`, they will be run sequencially one after another:
 
 ```yaml
 apiVersion: ansible.crossplane.io/v1alpha1
@@ -315,7 +301,8 @@ metadata:
   name: remote-example
 spec:
   forProvider:
-    role: sample_namespace.sample_role
+    roles:
+    - sample_namespace.sample_role
     vars:
       foo: value1
       bar:
@@ -364,7 +351,8 @@ metadata:
   name: remote-example
 spec:
   forProvider:
-    role: sample_namespace.sample_role
+    roles:
+    - sample_namespace.sample_role
     varFiles:
     - source: ConfigMapKey
       configMapKeyRef:
@@ -379,6 +367,8 @@ spec:
   providerConfigRef:
     name: provider-config-example
 ```
+
+Please note that the feature `varFiles` has not been implemented yet. It will be supported in the coming releases.
 
 ### Passing Variables via ProviderConfig
 
@@ -456,7 +446,8 @@ metadata:
     ansible.crossplane.io/runPolicy: ObserveAndDelete
 spec:
   forProvider:
-    role: sample_namespace.openshift_cluster
+    roles:
+    - sample_namespace.openshift_cluster
     vars:
       ocpVersion: "4.8.27"
       platform: "x"
@@ -510,7 +501,8 @@ metadata:
     ansible.crossplane.io/runPolicy: CheckWhenObserve
 spec:
   forProvider:
-    role: sample_namespace.sample_role
+    roles:
+    - sample_namespace.sample_role
   providerConfigRef:
     name: provider-config-example
 ```
@@ -581,5 +573,5 @@ The following list includes the major features that are discussed in this docume
 - ✅ Credentials
 - ✅ Requirements
 - ✅ Variables
-- ❎ Ansible Run Policy: ObserveAndDelete
-- ❎ Ansible Run Policy: CheckWhenObserve
+- ✅ Ansible Run Policy: ObserveAndDelete
+- ✅ Ansible Run Policy: CheckWhenObserve

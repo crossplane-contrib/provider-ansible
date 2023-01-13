@@ -569,7 +569,7 @@ The following list includes the major features that are discussed in this docume
 
 - ✅ Inline Playbook
 - ✅ Remote Role
-- ✅ Remote Playbook
+- ❎ Remote Playbook
 - ✅ Credentials
 - ✅ Requirements
 - ✅ Variables

@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"time"
+
 	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -26,12 +28,12 @@ import (
 
 // Setup creates all Template controllers with the supplied logger and adds them to
 // the supplied manager.
-func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string) error {
-	for _, setup := range []func(ctrl.Manager, controller.Options, string, string) error{
+func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string, timeout time.Duration) error {
+	for _, setup := range []func(ctrl.Manager, controller.Options, string, string, time.Duration) error{
 		config.Setup,
 		ansiblerun.Setup,
 	} {
-		if err := setup(mgr, o, ansibleCollectionsPath, ansibleRolesPath); err != nil {
+		if err := setup(mgr, o, ansibleCollectionsPath, ansibleRolesPath, timeout); err != nil {
 			return err
 		}
 	}

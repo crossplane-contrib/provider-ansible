@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
@@ -89,7 +90,7 @@ type ansibleRunner interface {
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
-func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string) error {
+func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string, timeout time.Duration) error {
 	name := managed.ControllerName(v1alpha1.AnsibleRunGroupKind)
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
@@ -122,6 +123,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansib
 		resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind),
 		managed.WithExternalConnecter(c),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
+		managed.WithTimeout(timeout),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))))
 
 	return ctrl.NewControllerManagedBy(mgr).

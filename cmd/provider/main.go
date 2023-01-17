@@ -39,6 +39,7 @@ func main() {
 		ansibleRolesPath       = app.Flag("ansible-roles-path", "Path where role(s) exists.").String()
 		syncPeriod             = app.Flag("sync", "Controller manager sync period such as 300ms, 1.5h, or 2h45m").Short('s').Default("1h").Duration()
 		pollInterval           = app.Flag("poll", "Poll interval controls how often an individual resource should be checked for drift.").Default("1m").Duration()
+		timeout                = app.Flag("timeout", "Controls how long Ansible processes may run before they are killed.").Default("20m").Duration()
 		leaderElection         = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").OverrideDefaultFromEnvar("LEADER_ELECTION").Bool()
 		maxReconcileRate       = app.Flag("max-reconcile-rate", "The maximum number of concurrent reconciliation operations.").Default("1").Int()
 	)
@@ -75,6 +76,6 @@ func main() {
 		Features:                &feature.Flags{},
 	}
 
-	kingpin.FatalIfError(ansible.Setup(mgr, o, *ansibleCollectionsPath, *ansibleRolesPath), "Cannot setup Ansible controllers")
+	kingpin.FatalIfError(ansible.Setup(mgr, o, *ansibleCollectionsPath, *ansibleRolesPath, *timeout), "Cannot setup Ansible controllers")
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
 }

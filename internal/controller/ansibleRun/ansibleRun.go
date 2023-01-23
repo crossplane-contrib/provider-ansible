@@ -247,10 +247,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	ps := c.ansible(dir)
 
 	// prepare behavior vars
-	behaviorVars, err := addBehaviorVars(pc)
-	if err != nil {
-		return nil, err
-	}
+	behaviorVars := addBehaviorVars(pc)
 
 	// Requirements is a list of collections/roles to be installed, it is stored in requirements file
 	requirementRolesStr := string(requirementRoles)
@@ -484,16 +481,10 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 }
 
-func addBehaviorVars(pc *v1alpha1.ProviderConfig) (map[string]string, error) {
+func addBehaviorVars(pc *v1alpha1.ProviderConfig) map[string]string {
 	behaviorVars := make(map[string]string, len(pc.Spec.Vars))
 	for _, v := range pc.Spec.Vars {
-		varB, err := json.Marshal(v)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(varB, &behaviorVars); err != nil {
-			return nil, err
-		}
+		behaviorVars[v.Key] = v.Value
 	}
-	return behaviorVars, nil
+	return behaviorVars
 }

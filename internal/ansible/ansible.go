@@ -231,11 +231,16 @@ func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]s
 	// gosec is disabled here because of G204. We should pay attention that user can't
 	// make command injection via command argument
 	dc := exec.CommandContext(ctx, p.GalaxyBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+
+	behaviorVarsSlice := runnerutil.ConvertMapToSlice(behaviorVars)
+
+	// Provider dc with envVar, priority is for behaviorVarsSlice over os env vars
 	dc.Env = append(dc.Env, os.Environ()...)
+	dc.Env = append(dc.Env, behaviorVarsSlice...)
 
 	out, err := dc.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to install galaxy collections/roles: %v: %w", string(out), err)
+		return fmt.Errorf("failed to install galaxy collections/roles: %s: %w", out, err)
 	}
 	return nil
 }

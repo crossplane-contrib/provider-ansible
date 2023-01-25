@@ -372,7 +372,7 @@ Please note that the feature `varFiles` has not been implemented yet. It will be
 
 ### Passing Variables via ProviderConfig
 
-To support loading Ansible roles or playbooks at runtime, the provider also allows users to manage their Ansible contents by specifiying some native Ansible environment variables to customize Ansible default behavior. Since such configuration have the global impact across all Ansible runs, this is done by passing variables in ProviderConfig.
+To support loading Ansible roles or playbooks at runtime, the provider also allows users to manage their Ansible contents by specifiying some native Ansible environment variables to customize Ansible default behavior. Since such configuration may have a global impact across all Ansible runs, this is done by passing variables in ProviderConfig.
 
 Here is an example:
 
@@ -384,9 +384,11 @@ metadata:
 spec:
   vars:
     # Specify the path where the Ansible roles are located
-    ANSIBLE_ROLE_PATH: /path/to/roles
+    - key: ANSIBLE_ROLE_PATH 
+      value: /path/to/roles
     # Specify the path where the Ansible collections are located
-    ANSIBLE_COLLECTION_PATH: /path/to/collections
+    - key: ANSIBLE_COLLECTION_PATH 
+      value: /path/to/collections
 ```
 
 ## AnsibleRun Lifecycle

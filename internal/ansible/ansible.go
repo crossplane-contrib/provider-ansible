@@ -17,15 +17,16 @@ limitations under the License.
 package ansible
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
-
-	"errors"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
@@ -175,9 +176,11 @@ func (p Parameters) playbookCmdFunc(ctx context.Context, playbookName string, pa
 // roleCmdFunc mimics https://github.com/operator-framework/operator-sdk/blob/707240f006ecfc0bc86e5c21f6874d302992d598/internal/ansible/runner/runner.go#L92-L118
 func (p Parameters) roleCmdFunc(ctx context.Context, roleName string, path string) cmdFuncType {
 	return func(behaviorVars map[string]string, checkMode bool) *exec.Cmd {
-		cmdArgs := []string{"run", filepath.Join(path, roleName)}
+		cmdArgs := []string{"run", p.WorkingDirPath}
 		cmdOptions := []string{
 			"--role", roleName,
+			"--roles-path", path,
+			"--project-dir", p.WorkingDirPath,
 		}
 		// enable check mode via cmdline https://github.com/ansible/ansible-runner/issues/580
 		if checkMode {
@@ -195,7 +198,7 @@ func (p Parameters) roleCmdFunc(ctx context.Context, roleName string, path strin
 
 		// override or omit envVar that may disturb the dc execution
 		// TODO: check if ANSIBLE_INVENTORY is useless when applying role ?
-		dc.Env = append(dc.Env, fmt.Sprintf("%s=%s", filepath.Join(p.WorkingDirPath, AnsibleInventoryPath), runnerutil.Hosts))
+		dc.Env = append(dc.Env, fmt.Sprintf("%s=%s", AnsibleInventoryPath, filepath.Join(p.WorkingDirPath, runnerutil.Hosts)))
 		return dc
 	}
 }
@@ -228,11 +231,16 @@ func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]s
 	// gosec is disabled here because of G204. We should pay attention that user can't
 	// make command injection via command argument
 	dc := exec.CommandContext(ctx, p.GalaxyBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
+
+	behaviorVarsSlice := runnerutil.ConvertMapToSlice(behaviorVars)
+
+	// Provider dc with envVar, priority is for behaviorVarsSlice over os env vars
 	dc.Env = append(dc.Env, os.Environ()...)
+	dc.Env = append(dc.Env, behaviorVarsSlice...)
 
 	out, err := dc.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to install galaxy collections/roles: %v: %w", string(out), err)
+		return fmt.Errorf("failed to install galaxy collections/roles: %s: %w", out, err)
 	}
 	return nil
 }
@@ -258,8 +266,6 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 		// For inline mode playbook is stored in the predefined playbookYml file
 		path = p.WorkingDirPath
 		cmdFunc = p.playbookCmdFunc(ctx, runnerutil.PlaybookYml, path)
-		// init ansible env dir
-		ansibleEnvDir = filepath.Clean(filepath.Join(path, "env"))
 	case len(cr.Spec.ForProvider.Roles) != 0:
 		var err error
 		path, err = selectRolePath(p, behaviorVars)
@@ -268,10 +274,10 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 		}
 		// TODO support multiple roles execution
 		cmdFunc = p.roleCmdFunc(ctx, cr.Spec.ForProvider.Roles[0].Name, path)
-		// init ansible env dir
-		// TODO ansibleEnvDir should be under the WorkingDirPath because it is 100% controllable
-		ansibleEnvDir = filepath.Clean(filepath.Join(path, cr.Spec.ForProvider.Roles[0].Name, "env"))
 	}
+
+	// init ansible env dir
+	ansibleEnvDir = filepath.Clean(filepath.Join(p.WorkingDirPath, "env"))
 
 	// prepare ansible runner extravars
 	// create extravars file even empty. We need the extravars file later to handle status variables
@@ -331,17 +337,33 @@ func (r *Runner) GetAnsibleRunPolicy() *RunPolicy {
 }
 
 // Run execute the appropriate cmdFunc
-func (r *Runner) Run() (*exec.Cmd, error) {
+func (r *Runner) Run() (*exec.Cmd, io.Reader, error) {
+	var (
+		stdoutBuf                  bytes.Buffer
+		stdoutWriter, stderrWriter io.Writer
+	)
+
 	dc := r.cmdFunc(r.behaviorVars, r.checkMode)
-	dc.Stdout = os.Stdout
-	dc.Stderr = os.Stderr
+	if !r.checkMode {
+		// for disabled checkMode dc.Stdout and dc.Stderr are respectfully
+		// written to os.Stdout and os.Stdout for debugging purpose
+		stdoutWriter = os.Stdout
+		stderrWriter = os.Stderr
+	} else {
+		// dc.Stdout is buffered into stdoutBuf for stream result parsing purposes.
+		// ansible-runner dry-run execution stdout is written only to stdoutBuf
+		// and not os.Stdout (we cannot parse os.Stdout because the main process is writing to it)
+		stdoutWriter = io.Writer(&stdoutBuf)
+	}
+	dc.Stdout = stdoutWriter
+	dc.Stderr = stderrWriter
 
 	err := dc.Start()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return dc, nil
+	return dc, &stdoutBuf, nil
 }
 
 // selectRolePath will determines the role path
@@ -416,8 +438,7 @@ func (r *Runner) WriteExtraVar(extraVar map[string]interface{}) error {
 
 // Diff parses `ansible-runner --check` json output to determine whether there is a diff between
 // the desired and the actual state of the configuration. It returns true if there is a diff.
-func Diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
-
+func Diff(res *results.AnsiblePlaybookJSONResults) bool {
 	var changes bool
 	// check changes for all hosts
 	for _, stats := range res.Stats {
@@ -426,51 +447,10 @@ func Diff(res *results.AnsiblePlaybookJSONResults) (bool, bool) {
 			break
 		}
 	}
-
-	return changes, exists(res)
-}
-
-// Exists must be true if a corresponding external resource exists
-func exists(res *results.AnsiblePlaybookJSONResults) bool {
-	var resourcesExists bool
-	// check changes for all hosts
-	for _, stats := range res.Stats {
-		// We assume that if stats.Ok == stats.Changed { 0 resourcesexists }
-		if stats.Ok-stats.Changed > 0 {
-			resourcesExists = true
-			break
-		}
-	}
-	return resourcesExists
+	return changes
 }
 
 // EnableCheckMode enable the runner checkMode.
 func (r *Runner) EnableCheckMode(m bool) {
 	r.checkMode = m
 }
-
-// runWithCheckMode plays `ansible-runner` with check mode
-// then parse JSON stream results
-/*func (r *Runner) runWithCheckMode(ctx context.Context, mg resource.Managed) (bool, bool, error) {
-	// Enable the check flag
-	// Check don't make any changes; instead, try to predict some of the changes that may occur
-	pbCmd.Playbook.Options.Check = true
-	result, err := runAndParsePlaybook(ctx, pbCmd)
-	if err != nil {
-		return false, false, err
-	}
-	changes, re := diff(result)
-	return changes, re, nil
-}*/
-
-// CreateOrUpdate run playbook during  update or create
-/*func (pbCmd *PbCmd) CreateOrUpdate(ctx context.Context, mg resource.Managed) error {
-	err := pbCmd.Playbook.Run(ctx)
-	return err
-}*/
-
-// ParseCmdJsonOutput parse ansible-runner json output
-/*func ParseCmdJsonOutput(ctx context.Context, pbCmd *PbCmd) (*results.AnsiblePlaybookJSONResults, error) {
-	res, err := results.ParseJSONResultsStream(os.Stdout)
-	return res, err
-}*/

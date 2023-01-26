@@ -22,10 +22,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
@@ -72,7 +74,7 @@ const (
 )
 
 const (
-	baseWorkingDir = "./ansibleDir"
+	baseWorkingDir = "/ansibleDir"
 )
 
 type params interface {
@@ -84,11 +86,11 @@ type ansibleRunner interface {
 	GetAnsibleRunPolicy() *ansible.RunPolicy
 	WriteExtraVar(extraVar map[string]interface{}) error
 	EnableCheckMode(checkMode bool)
-	Run() (*exec.Cmd, error)
+	Run() (*exec.Cmd, io.Reader, error)
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
-func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string) error {
+func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string, timeout time.Duration) error {
 	name := managed.ControllerName(v1alpha1.AnsibleRunGroupKind)
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
@@ -121,6 +123,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansib
 		resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind),
 		managed.WithExternalConnecter(c),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
+		managed.WithTimeout(timeout),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))))
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -244,10 +247,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	ps := c.ansible(dir)
 
 	// prepare behavior vars
-	behaviorVars, err := addBehaviorVars(pc)
-	if err != nil {
-		return nil, err
-	}
+	behaviorVars := addBehaviorVars(pc)
 
 	// Requirements is a list of collections/roles to be installed, it is stored in requirements file
 	requirementRolesStr := string(requirementRoles)
@@ -303,6 +303,11 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	if !ok {
 		return managed.ExternalObservation{}, errors.New(errNotAnsibleRun)
 	}
+	/* set Deletion Policy to Orphan as we cannot observe the external resource.
+	   So we won't wait for external resource deletion before attempting
+	   to delete the managed resource */
+	cr.SetDeletionPolicy(xpv1.DeletionOrphan)
+
 	switch c.runner.GetAnsibleRunPolicy().Name {
 	case "ObserveAndDelete", "":
 		if c.runner.GetAnsibleRunPolicy().Name == "" {
@@ -337,21 +342,24 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 			return managed.ExternalObservation{}, err
 		}
 		c.runner.EnableCheckMode(true)
-		dc, err := c.runner.Run()
+		dc, stdoutBuf, err := c.runner.Run()
 		if err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		res, err := results.ParseJSONResultsStream(os.Stdout)
+		res, err := results.ParseJSONResultsStream(stdoutBuf)
 		if err != nil {
 			return managed.ExternalObservation{}, err
 		}
 		if err = dc.Wait(); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		changes, exists := ansible.Diff(res)
+		changes := ansible.Diff(res)
 
+		// At this level, the ansible cannot detect the existence or not of the external resource
+		// due to the lack of the state in the ansible technology. So we consider that the externl resource
+		// exists and trigger post-observation step(s) based on changes returned by the ansible-runner stats
 		return managed.ExternalObservation{
-			ResourceExists:          exists,
+			ResourceExists:          true,
 			ResourceUpToDate:        !changes,
 			ResourceLateInitialized: false,
 		}, nil
@@ -376,7 +384,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 
 	// disable checkMode for real action
 	c.runner.EnableCheckMode(false)
-	dc, err := c.runner.Run()
+	dc, _, err := c.runner.Run()
 	if err != nil {
 		return managed.ExternalUpdate{}, err
 	}
@@ -403,7 +411,7 @@ func (c *external) Delete(_ context.Context, mg resource.Managed) error {
 	if err := c.runner.WriteExtraVar(nestedMap); err != nil {
 		return err
 	}
-	dc, err := c.runner.Run()
+	dc, _, err := c.runner.Run()
 	if err != nil {
 		return err
 	}
@@ -446,13 +454,10 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 		meta.AddAnnotations(desired, map[string]string{
 			v1.LastAppliedConfigAnnotation: string(out),
 		})
-		// set Deletion Policy to Orphan for non-existence of external resource
-		desired.SetDeletionPolicy(xpv1.DeletionOrphan)
 
 		if err := c.kube.Update(ctx, desired); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-
 		stateVar := make(map[string]string)
 		stateVar["state"] = "present"
 		nestedMap := make(map[string]interface{})
@@ -460,7 +465,7 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		dc, err := c.runner.Run()
+		dc, _, err := c.runner.Run()
 		if err != nil {
 			return managed.ExternalObservation{}, err
 		}
@@ -476,16 +481,10 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 }
 
-func addBehaviorVars(pc *v1alpha1.ProviderConfig) (map[string]string, error) {
+func addBehaviorVars(pc *v1alpha1.ProviderConfig) map[string]string {
 	behaviorVars := make(map[string]string, len(pc.Spec.Vars))
 	for _, v := range pc.Spec.Vars {
-		varB, err := json.Marshal(v)
-		if err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(varB, &behaviorVars); err != nil {
-			return nil, err
-		}
+		behaviorVars[v.Key] = v.Value
 	}
-	return behaviorVars, nil
+	return behaviorVars
 }

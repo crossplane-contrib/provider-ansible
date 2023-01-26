@@ -97,21 +97,7 @@ spec:
 
 This is more useful for a real project where Ansible contents are hosted in a remote place. The Ansible contents can be retrieved from [Ansible Galaxy](https://galaxy.ansible.com/) as community contents, or Automation Hub as Red Hat certified and supported contents, or a private Automation Hub that hosts private contents created and curated by an organization, or even a GitHub repository.
 
-Here is an example to run an Ansible role that is included in a collection, using `spec.forProvider.role`:
-
-```yaml
-apiVersion: ansible.crossplane.io/v1alpha1
-kind: AnsibleRun
-metadata:
-  name: remote-example
-spec:
-  forProvider:
-    role: sample_namespace.sample_role
-  providerConfigRef:
-    name: provider-config-example
-```
-
-If multiple roles are listed using `spec.forProvider.roles`, they will be run sequencially one after another. At the time of writing this document, only single role execution is supported.
+Here is an example to run multiple Ansible roles listed using `spec.forProvider.roles`, they will be run sequencially one after another:
 
 ```yaml
 apiVersion: ansible.crossplane.io/v1alpha1
@@ -315,7 +301,8 @@ metadata:
   name: remote-example
 spec:
   forProvider:
-    role: sample_namespace.sample_role
+    roles:
+    - sample_namespace.sample_role
     vars:
       foo: value1
       bar:
@@ -364,7 +351,8 @@ metadata:
   name: remote-example
 spec:
   forProvider:
-    role: sample_namespace.sample_role
+    roles:
+    - sample_namespace.sample_role
     varFiles:
     - source: ConfigMapKey
       configMapKeyRef:
@@ -380,9 +368,11 @@ spec:
     name: provider-config-example
 ```
 
+Please note that the feature `varFiles` has not been implemented yet. It will be supported in the coming releases.
+
 ### Passing Variables via ProviderConfig
 
-To support loading Ansible roles or playbooks at runtime, the provider also allows users to manage their Ansible contents by specifiying some native Ansible environment variables to customize Ansible default behavior. Since such configuration have the global impact across all Ansible runs, this is done by passing variables in ProviderConfig.
+To support loading Ansible roles or playbooks at runtime, the provider also allows users to manage their Ansible contents by specifiying some native Ansible environment variables to customize Ansible default behavior. Since such configuration may have a global impact across all Ansible runs, this is done by passing variables in ProviderConfig.
 
 Here is an example:
 
@@ -394,9 +384,11 @@ metadata:
 spec:
   vars:
     # Specify the path where the Ansible roles are located
-    ANSIBLE_ROLE_PATH: /path/to/roles
+    - key: ANSIBLE_ROLE_PATH 
+      value: /path/to/roles
     # Specify the path where the Ansible collections are located
-    ANSIBLE_COLLECTION_PATH: /path/to/collections
+    - key: ANSIBLE_COLLECTION_PATH 
+      value: /path/to/collections
 ```
 
 ## AnsibleRun Lifecycle
@@ -456,7 +448,8 @@ metadata:
     ansible.crossplane.io/runPolicy: ObserveAndDelete
 spec:
   forProvider:
-    role: sample_namespace.openshift_cluster
+    roles:
+    - sample_namespace.openshift_cluster
     vars:
       ocpVersion: "4.8.27"
       platform: "x"
@@ -495,7 +488,7 @@ In future release, we should allow users to use arbitrary name for the variable 
 
 This policy can be used when the Ansible modules that you use in your Ansible roles or playbooks support check mode. According to Ansible documents, check mode is a way for Ansible to do a "Dry Run". In check mode, Ansible runs without making any changes on remote systems. Modules that support check mode report the changes they would have made.
 
-When this policy is applied, the provider will run the Ansible contents in `Observe()` but using check mode. This will not apply any real change on target system, but is only used to detect changes between the actual state on target system and the desired state defined in `AnsibleRun` resource. If any change is detected, the provider will then trigger `Create()` or `Update()` to kick off the actual run of the same set of Ansible contents. It makes no difference from the provider side which lifecycle method to choose in this case, `Create()` or `Update()`, because the provider will defer to the Ansible contents to determine whether it is a create or update operation. For the call of `Delete()`, as previously discussed, it is triggered when the `AnsibleRun` resource is deleted.
+When this policy is applied, the provider will run the Ansible contents in `Observe()` but using check mode. This will not apply any real change on target system, but is only used to detect changes between the actual state on target system and the desired state defined in `AnsibleRun` resource. If any change is detected, the provider will then trigger `Update()` to kick off the actual run of the same set of Ansible contents. Then, the `ansible-runner` will determine whether it is a create or update operation. For the call of `Delete()`, as previously discussed, it is triggered when the `AnsibleRun` resource is deleted.
 
 ![](images/ansible-run-policy-2.png)
 
@@ -510,7 +503,8 @@ metadata:
     ansible.crossplane.io/runPolicy: CheckWhenObserve
 spec:
   forProvider:
-    role: sample_namespace.sample_role
+    roles:
+    - sample_namespace.sample_role
   providerConfigRef:
     name: provider-config-example
 ```
@@ -581,5 +575,5 @@ The following list includes the major features that are discussed in this docume
 - ✅ Credentials
 - ✅ Requirements
 - ✅ Variables
-- ❎ Ansible Run Policy: ObserveAndDelete
-- ❎ Ansible Run Policy: CheckWhenObserve
+- ✅ Ansible Run Policy: ObserveAndDelete
+- ✅ Ansible Run Policy: CheckWhenObserve

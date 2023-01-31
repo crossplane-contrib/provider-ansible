@@ -30,7 +30,8 @@ type Var struct {
 
 // A ProviderConfigSpec defines the desired state of a ProviderConfig.
 type ProviderConfigSpec struct {
-	// Credentials required to authenticate to this provider.
+	// Credentials are required to authenticate to private remote(s).
+	// +optional
 	Credentials []ProviderCredentials `json:"credentials"`
 
 	// Requirements manage the necessary dependencies to run ansible collection.

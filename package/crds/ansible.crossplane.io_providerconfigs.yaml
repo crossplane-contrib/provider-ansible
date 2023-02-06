@@ -44,7 +44,7 @@ spec:
             description: A ProviderConfigSpec defines the desired state of a ProviderConfig.
             properties:
               credentials:
-                description: Credentials required to authenticate to this provider.
+                description: Credentials are required to authenticate to private remote(s).
                 items:
                   description: ProviderCredentials required to authenticate.
                   properties:
@@ -124,8 +124,6 @@ spec:
                   - value
                   type: object
                 type: array
-            required:
-            - credentials
             type: object
           status:
             description: A ProviderConfigStatus reflects the observed state of a ProviderConfig.

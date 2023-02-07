@@ -52,6 +52,11 @@ spec:
                 description: AnsibleRunParameters are the configurable fields of a
                   AnsibleRun.
                 properties:
+                  executableInventory:
+                    default: false
+                    description: This sets the Inventory to executable for use by
+                      ansible.builtin.script plugin
+                    type: boolean
                   inventories:
                     description: The Inventories of this AnsibleRun.
                     items:

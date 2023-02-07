@@ -1,0 +1,28 @@
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: AnsibleRun
+metadata:
+  name: executable-inventory
+spec:
+  forProvider:
+    executableInventory: True
+    inventoryInline: |
+      #!/usr/bin/env python3
+      import json
+      import argparse
+      if __name__ == "__main__":
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--list", action="store_true", help="Show JSON of all managed hosts")
+        parser.add_argument("--host", help="Display vars related to the host")
+        args = parser.parse_args()
+      if args.list:
+          print(json.dumps({"all": {"hosts": ["localhost"]}}, indent=4))
+      elif args.host:
+        print(json.dumps({"ansible_connection": "local"}, indent=4))
+
+    playbookInline: |
+      ---
+      - hosts: all
+        tasks:
+          - name: ansibleplaybook-simple
+            debug:
+              msg: Your are running 'ansibleplaybook-simple' example

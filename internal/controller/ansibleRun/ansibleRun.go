@@ -63,6 +63,7 @@ const (
 	errRemoteConfiguration = "cannot get remote AnsibleRun configuration"
 	errWriteAnsibleRun     = "cannot write AnsibleRun configuration in" + runnerutil.PlaybookYml
 	errWriteInventory      = "cannot write AnsibleRun inventory in"
+	errChmodInventory      = "cannot change permissions of inventory file"
 	errMarshalRoles        = "cannot marshal Roles into yaml document"
 	errMkdir               = "cannot make directory"
 	errInit                = "cannot initialize Ansible client"
@@ -167,7 +168,10 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.GetProviderConfigReference().Name}, pc); err != nil {
 		return nil, fmt.Errorf("%s: %w", errGetPC, err)
 	}
-
+	var inventoryPerm os.FileMode = 0600
+	if cr.Spec.ForProvider.ExecutableInventory {
+		inventoryPerm = 0700
+	}
 	// Saved inventory needed for ansible content hosts
 	var buff bytes.Buffer
 	for _, i := range cr.Spec.ForProvider.Inventories {
@@ -185,8 +189,14 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		}
 	}
 	if buff.Len() != 0 {
-		if err := c.fs.WriteFile(filepath.Join(dir, runnerutil.Hosts), buff.Bytes(), 0600); err != nil {
+		if err := c.fs.WriteFile(filepath.Join(dir, runnerutil.Hosts), buff.Bytes(), inventoryPerm); err != nil {
 			return nil, fmt.Errorf("%s %s: %w", errWriteInventory, runnerutil.Hosts, err)
+		}
+		// WriteFile only sets permissions for new files, do an explicit chmod to ensure changing permissions are updated
+		// on existing files
+		err := c.fs.Chmod(filepath.Join(dir, runnerutil.Hosts), inventoryPerm)
+		if err != nil {
+			return nil, fmt.Errorf("%s %s: %w", errChmodInventory, runnerutil.Hosts, err)
 		}
 	}
 

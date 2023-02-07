@@ -40,6 +40,11 @@ type AnsibleRunParameters struct {
 	// +optional
 	Inventories []Inventory `json:"inventories"`
 
+	// This sets the Inventory to executable for use by ansible.builtin.script plugin
+	// +kubebuilder:default=false
+	// +optional
+	ExecutableInventory bool `json:"executableInventory"`
+
 	// The inline configuration of this AnsibleRun;  the content of a simple playbook.yml file may be written inline.
 	// This field is mutually exclusive with the “roles” field.
 	// +optional

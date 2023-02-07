@@ -48,12 +48,13 @@ const (
 
 type ErrFs struct {
 	afero.Fs
-
-	errs map[string]error
+	mkdirErrs map[string]error
+	writeErrs map[string]error
+	chmodErrs map[string]error
 }
 
 func (e *ErrFs) MkdirAll(path string, perm os.FileMode) error {
-	if err := e.errs[path]; err != nil {
+	if err := e.mkdirErrs[path]; err != nil {
 		return err
 	}
 	return e.Fs.MkdirAll(path, perm)
@@ -61,10 +62,17 @@ func (e *ErrFs) MkdirAll(path string, perm os.FileMode) error {
 
 // Called by afero.WriteFile
 func (e *ErrFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	if err := e.errs[name]; err != nil {
+	if err := e.writeErrs[name]; err != nil {
 		return nil, err
 	}
 	return e.Fs.OpenFile(name, flag, perm)
+}
+
+func (e *ErrFs) Chmod(name string, mode os.FileMode) error {
+	if err := e.chmodErrs[name]; err != nil {
+		return err
+	}
+	return e.Fs.Chmod(name, mode)
 }
 
 type MockPs struct {
@@ -146,8 +154,8 @@ func TestConnect(t *testing.T) {
 			fields: fields{
 				fs: afero.Afero{
 					Fs: &ErrFs{
-						Fs:   afero.NewMemMapFs(),
-						errs: map[string]error{filepath.Join(baseWorkingDir, string(uid)): errBoom},
+						Fs:        afero.NewMemMapFs(),
+						mkdirErrs: map[string]error{filepath.Join(baseWorkingDir, string(uid)): errBoom},
 					},
 				},
 			},
@@ -241,8 +249,8 @@ func TestConnect(t *testing.T) {
 				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
 				fs: afero.Afero{
 					Fs: &ErrFs{
-						Fs:   afero.NewMemMapFs(),
-						errs: map[string]error{filepath.Join(baseWorkingDir, string(uid), pbCreds): errBoom},
+						Fs:        afero.NewMemMapFs(),
+						writeErrs: map[string]error{filepath.Join(baseWorkingDir, string(uid), pbCreds): errBoom},
 					},
 				},
 			},
@@ -275,8 +283,8 @@ func TestConnect(t *testing.T) {
 				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
 				fs: afero.Afero{
 					Fs: &ErrFs{
-						Fs:   afero.NewMemMapFs(),
-						errs: map[string]error{filepath.Join("/tmp", baseWorkingDir, string(uid), ".git-credentials"): errBoom},
+						Fs:        afero.NewMemMapFs(),
+						writeErrs: map[string]error{filepath.Join("/tmp", baseWorkingDir, string(uid), ".git-credentials"): errBoom},
 					},
 				},
 			},
@@ -306,8 +314,8 @@ func TestConnect(t *testing.T) {
 				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
 				fs: afero.Afero{
 					Fs: &ErrFs{
-						Fs:   afero.NewMemMapFs(),
-						errs: map[string]error{filepath.Join(baseWorkingDir, string(uid), runnerutil.PlaybookYml): errBoom},
+						Fs:        afero.NewMemMapFs(),
+						writeErrs: map[string]error{filepath.Join(baseWorkingDir, string(uid), runnerutil.PlaybookYml): errBoom},
 					},
 				},
 			},
@@ -335,8 +343,8 @@ func TestConnect(t *testing.T) {
 				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
 				fs: afero.Afero{
 					Fs: &ErrFs{
-						Fs:   afero.NewMemMapFs(),
-						errs: map[string]error{filepath.Join(baseWorkingDir, string(uid), runnerutil.Hosts): errBoom},
+						Fs:        afero.NewMemMapFs(),
+						writeErrs: map[string]error{filepath.Join(baseWorkingDir, string(uid), runnerutil.Hosts): errBoom},
 					},
 				},
 			},
@@ -354,6 +362,35 @@ func TestConnect(t *testing.T) {
 				},
 			},
 			want: fmt.Errorf("%s %s: %w", errWriteInventory, runnerutil.Hosts, errBoom),
+		},
+		"ChmodInventoryError": {
+			reason: "We should return any error encountered while changing permissions on our Inventory file",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil),
+				},
+				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				fs: afero.Afero{
+					Fs: &ErrFs{
+						Fs:        afero.NewMemMapFs(),
+						chmodErrs: map[string]error{filepath.Join(baseWorkingDir, string(uid), runnerutil.Hosts): errBoom},
+					},
+				},
+			},
+			args: args{
+				mg: &v1alpha1.AnsibleRun{
+					ObjectMeta: metav1.ObjectMeta{UID: uid},
+					Spec: v1alpha1.AnsibleRunSpec{
+						ResourceSpec: xpv1.ResourceSpec{
+							ProviderConfigReference: &xpv1.Reference{},
+						},
+						ForProvider: v1alpha1.AnsibleRunParameters{
+							InventoryInline: &inlineYaml,
+						},
+					},
+				},
+			},
+			want: fmt.Errorf("%s %s: %w", errChmodInventory, runnerutil.Hosts, errBoom),
 		},
 		"AnsibleInitError": {
 			reason: "We should return any error encountered while initializing ansible-runner cli",

@@ -74,7 +74,9 @@ as the core Crossplane project.
 
 ### Run against a Kubernetes cluster
 
-If you have [go (1.19+)](https://golang.org/doc/devel/release.html#policy) and [docker](https://www.docker.com/) installed 
+See the header of [`go.mod`](./go.mod) for the minimum supported version of Go.
+
+If you have [go](https://golang.org/doc/devel/release) and [docker](https://www.docker.com/) installed 
 
 ```console
 make dev

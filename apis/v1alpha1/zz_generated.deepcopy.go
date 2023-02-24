@@ -124,11 +124,6 @@ func (in *AnsibleRunParameters) DeepCopyInto(out *AnsibleRunParameters) {
 		*out = make([]Role, len(*in))
 		copy(*out, *in)
 	}
-	if in.Playbooks != nil {
-		in, out := &in.Playbooks, &out.Playbooks
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	in.Vars.DeepCopyInto(&out.Vars)
 }
 

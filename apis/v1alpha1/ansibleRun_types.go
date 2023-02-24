@@ -55,11 +55,6 @@ type AnsibleRunParameters struct {
 	// +optional
 	Roles []Role `json:"roles"`
 
-	// The remote configuration of this AnsibleRun; the content can be retrieved from Ansible Galaxy as community contents
-	// This field is mutually exclusive with the “roles” field.
-	// +optional
-	Playbooks []string `json:"playbooks"`
-
 	// Configuration variables.
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional

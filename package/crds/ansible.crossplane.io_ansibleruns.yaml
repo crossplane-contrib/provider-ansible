@@ -125,13 +125,6 @@ spec:
                       content of a simple playbook.yml file may be written inline.
                       This field is mutually exclusive with the “roles” field.
                     type: string
-                  playbooks:
-                    description: The remote configuration of this AnsibleRun; the
-                      content can be retrieved from Ansible Galaxy as community contents
-                      This field is mutually exclusive with the “roles” field.
-                    items:
-                      type: string
-                    type: array
                   roles:
                     description: The remote configuration of this AnsibleRun; the
                       content can be retrieved from Ansible Galaxy as community contents

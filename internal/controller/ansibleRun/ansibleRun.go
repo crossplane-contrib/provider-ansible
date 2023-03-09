@@ -262,15 +262,16 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	// Requirements is a list of collections/roles to be installed, it is stored in requirements file
 	requirementRolesStr := string(requirementRoles)
 	if pc.Spec.Requirements != nil || requirementRolesStr != "" {
-		var requirementsType string
+		var installCollections, installRoles bool
 		var reqSlice []string
 		if pc.Spec.Requirements != nil {
 			reqSlice = append(reqSlice, *pc.Spec.Requirements)
-			requirementsType = "collection"
+			installCollections = true
+			installRoles = true
 		}
 		if requirementRolesStr != "" {
 			reqSlice = append(reqSlice, requirementRolesStr)
-			requirementsType = "role"
+			installRoles = true
 		}
 
 		// write requirements to requirements.yml
@@ -279,13 +280,13 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			return nil, fmt.Errorf("%s: %w", errWriteConfig, err)
 		}
 		// install ansible requirements using ansible-galaxy
-		switch requirementsType {
-		case "collection":
-			if err := ps.GalaxyInstall(ctx, behaviorVars, requirementsType); err != nil {
+		if installCollections {
+			if err := ps.GalaxyInstall(ctx, behaviorVars, "collection"); err != nil {
 				return nil, err
 			}
-		case "role":
-			if err := ps.GalaxyInstall(ctx, behaviorVars, requirementsType); err != nil {
+		}
+		if installRoles {
+			if err := ps.GalaxyInstall(ctx, behaviorVars, "role"); err != nil {
 				return nil, err
 			}
 		}

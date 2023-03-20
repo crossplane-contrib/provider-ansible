@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/apenella/go-ansible v1.1.7
-	github.com/crossplane/crossplane-runtime v0.19.1
+	github.com/crossplane/crossplane-runtime v0.19.2
 	github.com/crossplane/crossplane-tools v0.0.0-20220310165030-1f43fc12793e
 	github.com/google/go-cmp v0.5.9
 	github.com/spf13/afero v1.9.5

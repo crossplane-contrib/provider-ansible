@@ -444,7 +444,7 @@ apiVersion: ansible.crossplane.io/v1alpha1
 kind: AnsibleRun
 metadata:
   name: openshift-cluster
-  annotation:
+  annotations:
     ansible.crossplane.io/runPolicy: ObserveAndDelete
 spec:
   forProvider:
@@ -499,7 +499,7 @@ apiVersion: ansible.crossplane.io/v1alpha1
 kind: AnsibleRun
 metadata:
   name: remote-example
-  annotation:
+  annotations:
     ansible.crossplane.io/runPolicy: CheckWhenObserve
 spec:
   forProvider:

@@ -1,9 +1,9 @@
-FROM python:3.10-alpine3.17 AS build-base
+FROM python:3.12.1-alpine3.19 AS build-base
 RUN apk --no-cache add gcc musl-dev libffi-dev
 RUN mkdir -p /wheels
 RUN python -m pip wheel ansible ansible-runner --wheel-dir=/wheels
 
-FROM python:3.10-alpine3.17
+FROM python:3.12.1-alpine3.19
 RUN apk --no-cache add ca-certificates bash openssh-client git
 COPY --from=build-base /wheels/* /wheels/
 RUN python -m pip install --no-index --find-links=/wheels ansible ansible-runner && \

@@ -357,11 +357,11 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		if err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		res, err := results.ParseJSONResultsStream(stdoutBuf)
-		if err != nil {
+		if err = dc.Wait(); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		if err = dc.Wait(); err != nil {
+		res, err := results.ParseJSONResultsStream(stdoutBuf)
+		if err != nil {
 			return managed.ExternalObservation{}, err
 		}
 		changes := ansible.Diff(res)

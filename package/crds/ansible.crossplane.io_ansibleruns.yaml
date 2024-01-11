@@ -12,7 +12,7 @@ spec:
     listKind: AnsibleRunList
     plural: ansibleruns
     singular: ansiblerun
-  scope: Namespaced
+  scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .metadata.creationTimestamp

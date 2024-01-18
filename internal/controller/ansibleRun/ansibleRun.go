@@ -473,10 +473,9 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 			return managed.ExternalObservation{}, err
 		}
 
-	}
-
-	if err := c.runAnsible(ctx, desired); err != nil {
-		return managed.ExternalObservation{}, fmt.Errorf("running ansible: %w", err)
+		if err := c.runAnsible(ctx, desired); err != nil {
+			return managed.ExternalObservation{}, fmt.Errorf("running ansible: %w", err)
+		}
 	}
 
 	// The crossplane runtime is not aware of the external resource created by ansible content.

@@ -28,6 +28,7 @@ import (
 	"io"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/spf13/afero"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -531,8 +532,9 @@ func TestObserve(t *testing.T) {
 	}
 
 	type want struct {
-		o   managed.ExternalObservation
-		err error
+		o          managed.ExternalObservation
+		err        error
+		conditions []xpv1.Condition
 	}
 
 	cases := map[string]struct {
@@ -580,7 +582,8 @@ func TestObserve(t *testing.T) {
 				mg: &v1alpha1.AnsibleRun{},
 			},
 			want: want{
-				err: fmt.Errorf("%s: %w", errGetAnsibleRun, errBoom),
+				err:        fmt.Errorf("%s: %w", errGetAnsibleRun, errBoom),
+				conditions: []xpv1.Condition{xpv1.Unavailable()},
 			},
 		},
 		"GetObservedErrorWhenCheckWhenObservePolicy": {
@@ -640,8 +643,9 @@ func TestCreateOrUpdate(t *testing.T) {
 	}
 
 	type want struct {
-		o   managed.ExternalCreation
-		err error
+		o          managed.ExternalCreation
+		err        error
+		conditions []xpv1.Condition
 	}
 
 	cases := map[string]struct {
@@ -678,7 +682,7 @@ func TestCreateOrUpdate(t *testing.T) {
 				},
 			},
 			want: want{
-				err: errBoom,
+				err: fmt.Errorf("running ansible: %w", errBoom),
 			},
 		},
 		"SuccessObserveAndDelete": {
@@ -702,7 +706,9 @@ func TestCreateOrUpdate(t *testing.T) {
 					},
 				},
 			},
-			want: want{},
+			want: want{
+				conditions: []xpv1.Condition{xpv1.Available()},
+			},
 		},
 		"RunErrorWithCheckWhenObservePolicy": {
 			reason: "We should return any error we encounter when running the runner",
@@ -723,7 +729,7 @@ func TestCreateOrUpdate(t *testing.T) {
 				},
 			},
 			want: want{
-				err: errBoom,
+				err: fmt.Errorf("running ansible: %w", errBoom),
 			},
 		},
 		"SuccessCheckWhenObserve": {
@@ -747,7 +753,9 @@ func TestCreateOrUpdate(t *testing.T) {
 					},
 				},
 			},
-			want: want{},
+			want: want{
+				conditions: []xpv1.Condition{xpv1.Available()},
+			},
 		},
 	}
 
@@ -760,6 +768,18 @@ func TestCreateOrUpdate(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want.o, got); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want, +got:\n%s\n", tc.reason, diff)
+			}
+
+			if tc.args.mg == nil {
+				return
+			}
+
+			if diff := cmp.Diff(
+				tc.want.conditions,
+				tc.args.mg.(*v1alpha1.AnsibleRun).Status.Conditions,
+				cmpopts.IgnoreFields(xpv1.Condition{}, "LastTransitionTime"),
+			); diff != "" {
+				t.Errorf("ansiblerun conditions: (-want +got):\n%s", diff)
 			}
 		})
 	}

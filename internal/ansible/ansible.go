@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
@@ -357,6 +358,14 @@ func (r *Runner) Run() (*exec.Cmd, io.Reader, error) {
 	}
 	dc.Stdout = stdoutWriter
 	dc.Stderr = stderrWriter
+
+	// let the command shut down gracefully
+	dc.Cancel = func() error {
+		return dc.Process.Signal(os.Interrupt)
+	}
+	// if it doesn't respond to the SIGINT within 10s,
+	// it's going to be forcefully shut down with SIGKILL
+	dc.WaitDelay = 10 * time.Second
 
 	err := dc.Start()
 	if err != nil {

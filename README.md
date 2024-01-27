@@ -31,7 +31,7 @@ either fetched from a remote source (e.g. git), or simply specified inline.
 ## Getting Started and Documentation
 
 For getting started guides, installation, deployment, and administration, check latest
-Crossplane [document](https://crossplane.io/docs/latest).
+Crossplane [document](https://crossplane.io/docs/).
 
 ## Contributing
 

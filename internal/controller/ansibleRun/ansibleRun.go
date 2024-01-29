@@ -395,7 +395,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 
 	// disable checkMode for real action
 	c.runner.EnableCheckMode(false)
-	if err := c.runAnsible(ctx, cr); err != nil {
+	if err := c.runAnsible(cr); err != nil {
 		return managed.ExternalUpdate{}, fmt.Errorf("running ansible: %w", err)
 	}
 
@@ -473,7 +473,7 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 			return managed.ExternalObservation{}, err
 		}
 
-		if err := c.runAnsible(ctx, desired); err != nil {
+		if err := c.runAnsible(desired); err != nil {
 			return managed.ExternalObservation{}, fmt.Errorf("running ansible: %w", err)
 		}
 	}
@@ -485,7 +485,7 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 }
 
-func (c *external) runAnsible(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
+func (c *external) runAnsible(cr *v1alpha1.AnsibleRun) error {
 	dc, _, err := c.runner.Run()
 	if err != nil {
 		return err

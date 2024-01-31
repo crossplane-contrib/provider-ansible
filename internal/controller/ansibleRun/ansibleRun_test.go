@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/spf13/afero"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -537,6 +538,26 @@ func TestObserve(t *testing.T) {
 		conditions []xpv1.Condition
 	}
 
+	testPlaybook := "fake playbook"
+	testRun := v1alpha1.AnsibleRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				v1.LastAppliedConfigAnnotation: fmt.Sprintf(`{"playbookInline":"%s"}`, testPlaybook),
+			},
+		},
+		Spec: v1alpha1.AnsibleRunSpec{
+			ForProvider: v1alpha1.AnsibleRunParameters{
+				PlaybookInline: &testPlaybook,
+			},
+		},
+	}
+
+	testRunWithReconcileSuccess := testRun.DeepCopy()
+	testRunWithReconcileSuccess.SetConditions(xpv1.ReconcileSuccess())
+
+	testRunWithReconcileError := testRun.DeepCopy()
+	testRunWithReconcileError.SetConditions(xpv1.ReconcileError(errors.New("fake error")))
+
 	cases := map[string]struct {
 		reason string
 		fields fields
@@ -584,6 +605,69 @@ func TestObserve(t *testing.T) {
 			want: want{
 				err:        fmt.Errorf("%s: %w", errGetAnsibleRun, errBoom),
 				conditions: []xpv1.Condition{xpv1.Unavailable()},
+			},
+		},
+		"UnchangedWithObserveAndDeletePolicy": {
+			reason: "We should not run ansible when spec has not changed and last sync was successful",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
+						obj = testRunWithReconcileSuccess
+						return nil
+					}),
+					MockUpdate: test.NewMockUpdateFn(nil),
+				},
+				runner: &MockRunner{
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
+					},
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return nil
+					},
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
+						return nil, nil, fmt.Errorf("run should not have been called")
+					},
+				},
+			},
+			args: args{
+				mg: testRunWithReconcileSuccess,
+			},
+			want: want{
+				o: managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
+			},
+		},
+		"RetryFailedWithObserveAndDeletePolicy": {
+			reason: "We should run ansible when spec has not changed but last sync was unsuccessful",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
+						obj = testRunWithReconcileError
+						return nil
+					}),
+					MockUpdate: test.NewMockUpdateFn(nil),
+				},
+				runner: &MockRunner{
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{
+							Name: "ObserveAndDelete",
+						}
+					},
+					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
+						return nil
+					},
+					MockRun: func() (*exec.Cmd, io.Reader, error) {
+						cmd := exec.Command("ls")
+						return cmd, nil, cmd.Start()
+					},
+				},
+			},
+			args: args{
+				mg: testRunWithReconcileError,
+			},
+			want: want{
+				o: managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
 			},
 		},
 		"GetObservedErrorWhenCheckWhenObservePolicy": {

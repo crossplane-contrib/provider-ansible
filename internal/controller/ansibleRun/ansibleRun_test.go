@@ -611,10 +611,7 @@ func TestObserve(t *testing.T) {
 			reason: "We should not run ansible when spec has not changed and last sync was successful",
 			fields: fields{
 				kube: &test.MockClient{
-					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
-						obj = testRunWithReconcileSuccess
-						return nil
-					}),
+					MockGet:    test.NewMockGetFn(nil),
 					MockUpdate: test.NewMockUpdateFn(nil),
 				},
 				runner: &MockRunner{
@@ -642,10 +639,7 @@ func TestObserve(t *testing.T) {
 			reason: "We should run ansible when spec has not changed but last sync was unsuccessful",
 			fields: fields{
 				kube: &test.MockClient{
-					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
-						obj = testRunWithReconcileError
-						return nil
-					}),
+					MockGet:    test.NewMockGetFn(nil),
 					MockUpdate: test.NewMockUpdateFn(nil),
 				},
 				runner: &MockRunner{

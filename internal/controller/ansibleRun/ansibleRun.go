@@ -388,19 +388,15 @@ func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.Ext
 }
 
 func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.ExternalUpdate, error) {
-	_, ok := mg.(*v1alpha1.AnsibleRun)
+	cr, ok := mg.(*v1alpha1.AnsibleRun)
 	if !ok {
 		return managed.ExternalUpdate{}, errors.New(errNotAnsibleRun)
 	}
 
 	// disable checkMode for real action
 	c.runner.EnableCheckMode(false)
-	dc, _, err := c.runner.Run()
-	if err != nil {
-		return managed.ExternalUpdate{}, err
-	}
-	if err = dc.Wait(); err != nil {
-		return managed.ExternalUpdate{}, err
+	if err := c.runAnsible(cr); err != nil {
+		return managed.ExternalUpdate{}, fmt.Errorf("running ansible: %w", err)
 	}
 
 	// TODO handle ConnectionDetails https://github.com/multicloudlab/crossplane-provider-ansible/pull/74#discussion_r888467991
@@ -476,12 +472,9 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
 			return managed.ExternalObservation{}, err
 		}
-		dc, _, err := c.runner.Run()
-		if err != nil {
-			return managed.ExternalObservation{}, err
-		}
-		if err = dc.Wait(); err != nil {
-			return managed.ExternalObservation{}, err
+
+		if err := c.runAnsible(desired); err != nil {
+			return managed.ExternalObservation{}, fmt.Errorf("running ansible: %w", err)
 		}
 	}
 
@@ -490,6 +483,28 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	// changes, so we requeue a speculative reconcile after the specified poll
 	// interval in order to observe it and react accordingly.
 	return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
+}
+
+func (c *external) runAnsible(cr *v1alpha1.AnsibleRun) error {
+	dc, _, err := c.runner.Run()
+	if err != nil {
+		return err
+	}
+
+	if err = dc.Wait(); err != nil {
+		cond := xpv1.Unavailable()
+		cond.Message = err.Error()
+		cr.SetConditions(cond)
+
+		return err
+	}
+
+	cr.SetConditions(xpv1.Available())
+
+	// no need to persist status update explicitly, cr modifications are in-place and will
+	// be persisted by crossplane-runtime
+
+	return nil
 }
 
 func addBehaviorVars(pc *v1alpha1.ProviderConfig) map[string]string {

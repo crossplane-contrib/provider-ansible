@@ -441,41 +441,39 @@ func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleR
 	return lastParameters, nil
 }
 
-// nolint: gocyclo
-// TODO reduce cyclomatic complexity
 func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alpha1.AnsibleRunParameters, desired *v1alpha1.AnsibleRun) (managed.ExternalObservation, error) {
-	isUpToDate := false
-	if lastParameters != nil {
-		if equality.Semantic.DeepEqual(*lastParameters, desired.Spec.ForProvider) {
-			// Mark as up-to-date since last is equal to desired
-			isUpToDate = true
-		}
+	// Mark as up-to-date if last is equal to desired
+	isUpToDate := (lastParameters != nil && equality.Semantic.DeepEqual(*lastParameters, desired.Spec.ForProvider))
+
+	isLastSyncOK := (desired.GetCondition(xpv1.TypeSynced).Status == v1.ConditionTrue)
+
+	if isUpToDate && isLastSyncOK {
+		// nothing to do for this run
+		return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 	}
 
-	if !isUpToDate {
-		out, err := json.Marshal(desired.Spec.ForProvider)
-		if err != nil {
-			return managed.ExternalObservation{}, err
-		}
-		// set LastAppliedConfig Annotation to avoid useless cmd run
-		meta.AddAnnotations(desired, map[string]string{
-			v1.LastAppliedConfigAnnotation: string(out),
-		})
+	out, err := json.Marshal(desired.Spec.ForProvider)
+	if err != nil {
+		return managed.ExternalObservation{}, err
+	}
+	// set LastAppliedConfig Annotation to avoid useless cmd run
+	meta.AddAnnotations(desired, map[string]string{
+		v1.LastAppliedConfigAnnotation: string(out),
+	})
 
-		if err := c.kube.Update(ctx, desired); err != nil {
-			return managed.ExternalObservation{}, err
-		}
-		stateVar := make(map[string]string)
-		stateVar["state"] = "present"
-		nestedMap := make(map[string]interface{})
-		nestedMap[desired.GetName()] = stateVar
-		if err := c.runner.WriteExtraVar(nestedMap); err != nil {
-			return managed.ExternalObservation{}, err
-		}
+	if err := c.kube.Update(ctx, desired); err != nil {
+		return managed.ExternalObservation{}, err
+	}
+	stateVar := make(map[string]string)
+	stateVar["state"] = "present"
+	nestedMap := make(map[string]interface{})
+	nestedMap[desired.GetName()] = stateVar
+	if err := c.runner.WriteExtraVar(nestedMap); err != nil {
+		return managed.ExternalObservation{}, err
+	}
 
-		if err := c.runAnsible(desired); err != nil {
-			return managed.ExternalObservation{}, fmt.Errorf("running ansible: %w", err)
-		}
+	if err := c.runAnsible(desired); err != nil {
+		return managed.ExternalObservation{}, fmt.Errorf("running ansible: %w", err)
 	}
 
 	// The crossplane runtime is not aware of the external resource created by ansible content.

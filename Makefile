@@ -14,7 +14,7 @@ PLATFORMS ?= linux_amd64 linux_arm64
 # ====================================================================================
 # Setup Go
 
-GO_REQUIRED_VERSION = 1.19
+GO_REQUIRED_VERSION = 1.21
 NPROCS ?= 1
 GO_TEST_PARALLEL := $(shell echo $$(( $(NPROCS) / 2 )))
 GO_STATIC_PACKAGES = $(GO_PROJECT)/cmd/provider
@@ -28,7 +28,7 @@ RUNNING_IN_CI = true
 # ====================================================================================
 # Setup Kubernetes tools
 
-UP_VERSION = v0.14.0
+UP_VERSION = v0.21.0
 UP_CHANNEL = stable
 -include build/makelib/k8s_tools.mk
 

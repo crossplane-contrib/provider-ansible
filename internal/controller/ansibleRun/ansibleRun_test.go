@@ -611,8 +611,9 @@ func TestObserve(t *testing.T) {
 			reason: "We should not run ansible when spec has not changed and last sync was successful",
 			fields: fields{
 				kube: &test.MockClient{
-					MockGet:    test.NewMockGetFn(nil),
-					MockUpdate: test.NewMockUpdateFn(nil),
+					MockGet:          test.NewMockGetFn(nil),
+					MockUpdate:       test.NewMockUpdateFn(nil),
+					MockStatusUpdate: test.NewMockSubResourceUpdateFn(nil),
 				},
 				runner: &MockRunner{
 					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
@@ -639,8 +640,9 @@ func TestObserve(t *testing.T) {
 			reason: "We should run ansible when spec has not changed but last sync was unsuccessful",
 			fields: fields{
 				kube: &test.MockClient{
-					MockGet:    test.NewMockGetFn(nil),
-					MockUpdate: test.NewMockUpdateFn(nil),
+					MockGet:          test.NewMockGetFn(nil),
+					MockUpdate:       test.NewMockUpdateFn(nil),
+					MockStatusUpdate: test.NewMockSubResourceUpdateFn(nil),
 				},
 				runner: &MockRunner{
 					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
@@ -769,6 +771,9 @@ func TestCreateOrUpdate(t *testing.T) {
 				mg: &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
+				kube: &test.MockClient{
+					MockStatusUpdate: test.NewMockSubResourceUpdateFn(nil),
+				},
 				runner: &MockRunner{
 					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
 						return &ansible.RunPolicy{
@@ -816,6 +821,9 @@ func TestCreateOrUpdate(t *testing.T) {
 				mg: &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
+				kube: &test.MockClient{
+					MockStatusUpdate: test.NewMockSubResourceUpdateFn(nil),
+				},
 				runner: &MockRunner{
 					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
 						return &ansible.RunPolicy{

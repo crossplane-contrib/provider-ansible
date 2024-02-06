@@ -395,7 +395,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 
 	// disable checkMode for real action
 	c.runner.EnableCheckMode(false)
-	if err := c.runAnsible(cr); err != nil {
+	if err := c.runAnsible(ctx, cr); err != nil {
 		return managed.ExternalUpdate{}, fmt.Errorf("running ansible: %w", err)
 	}
 
@@ -448,6 +448,10 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	isLastSyncOK := (desired.GetCondition(xpv1.TypeSynced).Status == v1.ConditionTrue)
 
 	if isUpToDate && isLastSyncOK {
+		desired.SetConditions(xpv1.Available())
+		if err := c.kube.Status().Update(ctx, desired); err != nil {
+			return managed.ExternalObservation{}, fmt.Errorf("updating status: %w", err)
+		}
 		// nothing to do for this run
 		return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 	}
@@ -472,7 +476,7 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 		return managed.ExternalObservation{}, err
 	}
 
-	if err := c.runAnsible(desired); err != nil {
+	if err := c.runAnsible(ctx, desired); err != nil {
 		return managed.ExternalObservation{}, fmt.Errorf("running ansible: %w", err)
 	}
 
@@ -483,7 +487,7 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 }
 
-func (c *external) runAnsible(cr *v1alpha1.AnsibleRun) error {
+func (c *external) runAnsible(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
 	dc, _, err := c.runner.Run()
 	if err != nil {
 		return err
@@ -493,16 +497,15 @@ func (c *external) runAnsible(cr *v1alpha1.AnsibleRun) error {
 		cond := xpv1.Unavailable()
 		cond.Message = err.Error()
 		cr.SetConditions(cond)
-
-		return err
+	} else {
+		cr.SetConditions(xpv1.Available())
 	}
 
-	cr.SetConditions(xpv1.Available())
+	if err := c.kube.Status().Update(ctx, cr); err != nil {
+		return fmt.Errorf("updating status: %w", err)
+	}
 
-	// no need to persist status update explicitly, cr modifications are in-place and will
-	// be persisted by crossplane-runtime
-
-	return nil
+	return err
 }
 
 func addBehaviorVars(pc *v1alpha1.ProviderConfig) map[string]string {

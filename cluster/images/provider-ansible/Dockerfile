@@ -4,7 +4,7 @@ RUN mkdir -p /wheels
 RUN python -m pip wheel ansible ansible-runner --wheel-dir=/wheels
 
 FROM python:3.10-alpine3.17
-RUN apk --no-cache add ca-certificates bash openssh-client git
+RUN apk --no-cache add ca-certificates bash openssh-client git dumb-init
 COPY --from=build-base /wheels/* /wheels/
 RUN python -m pip install --no-index --find-links=/wheels ansible ansible-runner && \
     rm -r /wheels
@@ -25,4 +25,4 @@ RUN chown ansible /ansibleDir /.ansible
 
 EXPOSE 8080
 USER ansible
-ENTRYPOINT ["crossplane-ansible-provider"]
+ENTRYPOINT ["/usr/bin/dumb-init", "crossplane-ansible-provider"]

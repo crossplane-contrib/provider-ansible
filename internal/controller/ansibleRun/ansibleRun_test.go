@@ -96,14 +96,15 @@ func (ps MockPs) AddFile(path string, content []byte) error {
 }
 
 type MockRunner struct {
-	MockRun              func() (*exec.Cmd, io.Reader, error)
+	MockRun              func(ctx context.Context) (io.Reader, error)
 	MockWriteExtraVar    func(extraVar map[string]interface{}) error
 	MockAnsibleRunPolicy func() *ansible.RunPolicy
 	MockEnableCheckMode  func(checkMode bool)
+	MockFailureReason    func() (string, error)
 }
 
-func (r MockRunner) Run() (*exec.Cmd, io.Reader, error) {
-	return r.MockRun()
+func (r MockRunner) Run(ctx context.Context) (io.Reader, error) {
+	return r.MockRun(ctx)
 }
 
 func (r MockRunner) WriteExtraVar(extraVar map[string]interface{}) error {
@@ -116,6 +117,10 @@ func (r MockRunner) GetAnsibleRunPolicy() *ansible.RunPolicy {
 
 func (r MockRunner) EnableCheckMode(checkMode bool) {
 	r.MockEnableCheckMode(checkMode)
+}
+
+func (r MockRunner) FailureReason() (string, error) {
+	return r.MockFailureReason()
 }
 
 func TestConnect(t *testing.T) {
@@ -624,8 +629,8 @@ func TestObserve(t *testing.T) {
 					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
 						return nil
 					},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						return nil, nil, fmt.Errorf("run should not have been called")
+					MockRun: func(ctx context.Context) (io.Reader, error) {
+						return nil, fmt.Errorf("run should not have been called")
 					},
 				},
 			},
@@ -653,9 +658,10 @@ func TestObserve(t *testing.T) {
 					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
 						return nil
 					},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
+					MockRun: func(ctx context.Context) (io.Reader, error) {
 						cmd := exec.Command("ls")
-						return cmd, nil, cmd.Start()
+						cmd.Start()
+						return nil, cmd.Wait()
 					},
 				},
 			},
@@ -678,8 +684,8 @@ func TestObserve(t *testing.T) {
 					MockWriteExtraVar: func(extraVar map[string]interface{}) error {
 						return nil
 					},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						return nil, nil, errBoom
+					MockRun: func(context.Context) (io.Reader, error) {
+						return nil, errBoom
 					},
 					MockEnableCheckMode: func(checkMode bool) {
 
@@ -711,6 +717,8 @@ func TestObserve(t *testing.T) {
 
 func TestCreateOrUpdate(t *testing.T) {
 	errBoom := errors.New("boom")
+	unavaliableCond := xpv1.Unavailable()
+	unavaliableCond.Message = errBoom.Error()
 
 	type fields struct {
 		kube   client.Client
@@ -756,19 +764,21 @@ func TestCreateOrUpdate(t *testing.T) {
 						}
 					},
 					MockEnableCheckMode: func(checkMode bool) {},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						return nil, nil, errBoom
+					MockRun: func(context.Context) (io.Reader, error) {
+						return nil, errBoom
 					},
 				},
 			},
 			want: want{
-				err: fmt.Errorf("running ansible: %w", errBoom),
+				err:        fmt.Errorf("running ansible: %w", errBoom),
+				conditions: []xpv1.Condition{unavaliableCond},
 			},
 		},
 		"SuccessObserveAndDelete": {
 			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
 			args: args{
-				mg: &v1alpha1.AnsibleRun{},
+				ctx: context.Background(),
+				mg:  &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
 				kube: &test.MockClient{
@@ -781,11 +791,10 @@ func TestCreateOrUpdate(t *testing.T) {
 						}
 					},
 					MockEnableCheckMode: func(checkMode bool) {},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						ctx := context.Background()
+					MockRun: func(ctx context.Context) (io.Reader, error) {
 						cmd := exec.CommandContext(ctx, "ls")
 						cmd.Start()
-						return cmd, nil, nil
+						return nil, cmd.Wait()
 					},
 				},
 			},
@@ -796,7 +805,8 @@ func TestCreateOrUpdate(t *testing.T) {
 		"RunErrorWithCheckWhenObservePolicy": {
 			reason: "We should return any error we encounter when running the runner",
 			args: args{
-				mg: &v1alpha1.AnsibleRun{},
+				ctx: context.Background(),
+				mg:  &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
 				runner: &MockRunner{
@@ -806,19 +816,21 @@ func TestCreateOrUpdate(t *testing.T) {
 						}
 					},
 					MockEnableCheckMode: func(checkMode bool) {},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						return nil, nil, errBoom
+					MockRun: func(context.Context) (io.Reader, error) {
+						return nil, errBoom
 					},
 				},
 			},
 			want: want{
-				err: fmt.Errorf("running ansible: %w", errBoom),
+				err:        fmt.Errorf("running ansible: %w", errBoom),
+				conditions: []xpv1.Condition{unavaliableCond},
 			},
 		},
 		"SuccessCheckWhenObserve": {
 			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
 			args: args{
-				mg: &v1alpha1.AnsibleRun{},
+				ctx: context.Background(),
+				mg:  &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
 				kube: &test.MockClient{
@@ -831,11 +843,10 @@ func TestCreateOrUpdate(t *testing.T) {
 						}
 					},
 					MockEnableCheckMode: func(checkMode bool) {},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						ctx := context.Background()
+					MockRun: func(ctx context.Context) (io.Reader, error) {
 						cmd := exec.CommandContext(ctx, "ls")
 						cmd.Start()
-						return cmd, nil, nil
+						return nil, cmd.Wait()
 					},
 				},
 			},
@@ -919,7 +930,8 @@ func TestDelete(t *testing.T) {
 		"RunErrorWithObserveAndDeletePolicy": {
 			reason: "We should return any error we encounter when running the runner",
 			args: args{
-				mg: &v1alpha1.AnsibleRun{},
+				ctx: context.Background(),
+				mg:  &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
 				runner: &MockRunner{
@@ -931,8 +943,8 @@ func TestDelete(t *testing.T) {
 							Name: "ObserveAndDelete",
 						}
 					},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						return nil, nil, errBoom
+					MockRun: func(context.Context) (io.Reader, error) {
+						return nil, errBoom
 					},
 				},
 			},
@@ -941,7 +953,8 @@ func TestDelete(t *testing.T) {
 		"SuccessObserveAndDelete": {
 			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
 			args: args{
-				mg: &v1alpha1.AnsibleRun{},
+				ctx: context.Background(),
+				mg:  &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
 				runner: &MockRunner{
@@ -953,11 +966,10 @@ func TestDelete(t *testing.T) {
 							Name: "ObserveAndDelete",
 						}
 					},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						ctx := context.Background()
+					MockRun: func(ctx context.Context) (io.Reader, error) {
 						cmd := exec.CommandContext(ctx, "ls")
 						cmd.Start()
-						return cmd, nil, nil
+						return nil, cmd.Wait()
 					},
 				},
 			},
@@ -966,7 +978,8 @@ func TestDelete(t *testing.T) {
 		"RunErrorWithCheckWhenObservePolicy": {
 			reason: "We should return any error we encounter when running the runner",
 			args: args{
-				mg: &v1alpha1.AnsibleRun{},
+				ctx: context.Background(),
+				mg:  &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
 				runner: &MockRunner{
@@ -978,8 +991,8 @@ func TestDelete(t *testing.T) {
 							Name: "CheckWhenObserve",
 						}
 					},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						return nil, nil, errBoom
+					MockRun: func(context.Context) (io.Reader, error) {
+						return nil, errBoom
 					},
 				},
 			},
@@ -988,7 +1001,8 @@ func TestDelete(t *testing.T) {
 		"SuccessCheckWhenObserve": {
 			reason: "We should not return an error when we successfully delete the AnsibleRun resource",
 			args: args{
-				mg: &v1alpha1.AnsibleRun{},
+				ctx: context.Background(),
+				mg:  &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
 				runner: &MockRunner{
@@ -1000,11 +1014,10 @@ func TestDelete(t *testing.T) {
 							Name: "CheckWhenObserve",
 						}
 					},
-					MockRun: func() (*exec.Cmd, io.Reader, error) {
-						ctx := context.Background()
+					MockRun: func(ctx context.Context) (io.Reader, error) {
 						cmd := exec.CommandContext(ctx, "ls")
 						cmd.Start()
-						return cmd, nil, nil
+						return nil, cmd.Wait()
 					},
 				},
 			},

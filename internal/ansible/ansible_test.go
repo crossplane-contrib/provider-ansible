@@ -189,7 +189,8 @@ func TestRun(t *testing.T) {
 	runner := &Runner{
 		Path: dir,
 		cmdFunc: func(_ map[string]string, _ bool) *exec.Cmd {
-			// echo works well for testing cause it will just print all the args and flags it doesn't recognize and return success
+			// echo works well for testing cause it will just print all the args and flags it doesn't recognize and return success,
+			// therefore checking its output also checks the args passed to it are correct
 			return exec.CommandContext(context.Background(), "echo")
 		},
 		AnsibleEnvDir:         filepath.Join(dir, "env"),
@@ -198,7 +199,6 @@ func TestRun(t *testing.T) {
 	}
 
 	expectedArgs := []string{"--rotate-artifacts", "3"}
-	expectedCmd := exec.Command(runner.cmdFunc(nil, false).Path, expectedArgs...)
 
 	testCases := map[string]struct {
 		checkMode      bool
@@ -216,17 +216,9 @@ func TestRun(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			runner.checkMode = tc.checkMode
-			cmd, outBuf, err := runner.Run()
+			outBuf, err := runner.Run(context.Background())
 			if err != nil {
 				t.Fatalf("Unexpected Run() error: %v", err)
-			}
-
-			if cmd.String() != expectedCmd.String() {
-				t.Errorf("Unexpected command %q expected %q", expectedCmd.String(), cmd.String())
-			}
-
-			if err := cmd.Wait(); err != nil {
-				t.Fatalf("Unexpected cmd.Wait() error: %v", err)
 			}
 
 			out, err := io.ReadAll(outBuf)

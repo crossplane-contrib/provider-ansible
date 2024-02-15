@@ -447,9 +447,9 @@ func parseEvents(dir string) ([]jobEvent, error) {
 		return nil, fmt.Errorf("reading job events directory: %w", err)
 	}
 
-	var evts []jobEvent
-	for _, file := range files {
-		evtBytes, err := os.ReadFile(filepath.Join(dir, file.Name()))
+	evts := make([]jobEvent, len(files))
+	for i, file := range files {
+		evtBytes, err := os.ReadFile(filepath.Clean(filepath.Join(dir, file.Name())))
 		if err != nil {
 			return nil, fmt.Errorf("reading job event file %q: %w", file.Name(), err)
 		}
@@ -458,7 +458,7 @@ func parseEvents(dir string) ([]jobEvent, error) {
 		if err := json.Unmarshal(evtBytes, &evt); err != nil {
 			return nil, fmt.Errorf("unmarshaling job event from file %q: %w", file.Name(), err)
 		}
-		evts = append(evts, evt)
+		evts[i] = evt
 	}
 
 	return evts, nil

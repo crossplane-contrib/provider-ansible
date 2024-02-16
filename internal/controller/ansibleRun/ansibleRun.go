@@ -91,7 +91,7 @@ type ansibleRunner interface {
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
-func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string, timeout time.Duration) error {
+func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string, timeout time.Duration, artifactsHistoryLimit int) error {
 	name := managed.ControllerName(v1alpha1.AnsibleRunGroupKind)
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
@@ -111,11 +111,12 @@ func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansib
 		fs:    fs,
 		ansible: func(dir string) params {
 			return ansible.Parameters{
-				WorkingDirPath:  dir,
-				GalaxyBinary:    galaxyBinary,
-				RunnerBinary:    runnerBinary,
-				CollectionsPath: ansibleCollectionsPath,
-				RolesPath:       ansibleRolesPath,
+				WorkingDirPath:        dir,
+				GalaxyBinary:          galaxyBinary,
+				RunnerBinary:          runnerBinary,
+				CollectionsPath:       ansibleCollectionsPath,
+				RolesPath:             ansibleRolesPath,
+				ArtifactsHistoryLimit: artifactsHistoryLimit,
 			}
 		},
 	}

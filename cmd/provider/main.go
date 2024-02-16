@@ -42,6 +42,7 @@ func main() {
 		timeout                = app.Flag("timeout", "Controls how long Ansible processes may run before they are killed.").Default("20m").Duration()
 		leaderElection         = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").OverrideDefaultFromEnvar("LEADER_ELECTION").Bool()
 		maxReconcileRate       = app.Flag("max-reconcile-rate", "The maximum number of concurrent reconciliation operations.").Default("1").Int()
+		artifactsHistoryLimit  = app.Flag("artifacts-history-limit", "Each attempt to run the playbook/role generates a set of artifacts on disk. This settings limits how many of these to keep.").Default("50").Int()
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -76,6 +77,6 @@ func main() {
 		Features:                &feature.Flags{},
 	}
 
-	kingpin.FatalIfError(ansible.Setup(mgr, o, *ansibleCollectionsPath, *ansibleRolesPath, *timeout), "Cannot setup Ansible controllers")
+	kingpin.FatalIfError(ansible.Setup(mgr, o, *ansibleCollectionsPath, *ansibleRolesPath, *timeout, *artifactsHistoryLimit), "Cannot setup Ansible controllers")
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
 }

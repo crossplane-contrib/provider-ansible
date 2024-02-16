@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
@@ -69,6 +70,8 @@ type Parameters struct {
 	CollectionsPath string
 	// The source of this filed is either controller flag `--ansible-roles-path` or the env vars : `ANSIBLE_ROLES_PATH` , DEFAULT_ROLES_PATH`
 	RolesPath string
+	// the limit on the number of artifact directories to keep for each run
+	ArtifactsHistoryLimit int
 }
 
 // RunPolicy represents the run policies of Ansible.
@@ -141,6 +144,14 @@ func withAnsibleEnvDir(dir string) runnerOption {
 func withAnsibleRunPolicy(p *RunPolicy) runnerOption {
 	return func(r *Runner) {
 		r.AnsibleRunPolicy = p
+	}
+}
+
+// withArtifactsHistoryLimit sets the limit on the number of artifacts
+// directories to keep; each invocation of ansible-runner produces an artifacts directory.
+func withArtifactsHistoryLimit(limit int) runnerOption {
+	return func(r *Runner) {
+		r.artifactsHistoryLimit = limit
 	}
 }
 
@@ -307,17 +318,19 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 		withAnsibleRunPolicy(rPolicy),
 		// TODO should be moved to connect() func
 		withAnsibleEnvDir(ansibleEnvDir),
+		withArtifactsHistoryLimit(p.ArtifactsHistoryLimit),
 	), nil
 }
 
 // Runner struct holds the configuration to run the cmdFunc
 type Runner struct {
-	Path             string // absolute path on disk to a playbook or role depending on what cmdFunc expects
-	behaviorVars     map[string]string
-	cmdFunc          cmdFuncType // returns a Cmd that runs ansible-runner
-	AnsibleEnvDir    string
-	checkMode        bool
-	AnsibleRunPolicy *RunPolicy
+	Path                  string // absolute path on disk to a playbook or role depending on what cmdFunc expects
+	behaviorVars          map[string]string
+	cmdFunc               cmdFuncType // returns a Cmd that runs ansible-runner
+	AnsibleEnvDir         string
+	checkMode             bool
+	AnsibleRunPolicy      *RunPolicy
+	artifactsHistoryLimit int
 }
 
 // new returns a runner that will be used as ansible-runner client
@@ -345,6 +358,7 @@ func (r *Runner) Run() (*exec.Cmd, io.Reader, error) {
 	)
 
 	dc := r.cmdFunc(r.behaviorVars, r.checkMode)
+	dc.Args = append(dc.Args, "--rotate-artifacts", strconv.Itoa(r.artifactsHistoryLimit))
 	if !r.checkMode {
 		// for disabled checkMode dc.Stdout and dc.Stderr are respectfully
 		// written to os.Stdout and os.Stdout for debugging purpose

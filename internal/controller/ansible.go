@@ -28,12 +28,12 @@ import (
 
 // Setup creates all Template controllers with the supplied logger and adds them to
 // the supplied manager.
-func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string, timeout time.Duration) error {
-	for _, setup := range []func(ctrl.Manager, controller.Options, string, string, time.Duration) error{
+func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string, timeout time.Duration, artifactsHistoryLimit int) error {
+	for _, setup := range []func(ctrl.Manager, controller.Options, string, string, time.Duration, int) error{
 		config.Setup,
 		ansiblerun.Setup,
 	} {
-		if err := setup(mgr, o, ansibleCollectionsPath, ansibleRolesPath, timeout); err != nil {
+		if err := setup(mgr, o, ansibleCollectionsPath, ansibleRolesPath, timeout, artifactsHistoryLimit); err != nil {
 			return err
 		}
 	}

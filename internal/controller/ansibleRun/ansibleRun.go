@@ -90,8 +90,16 @@ type ansibleRunner interface {
 	Run() (*exec.Cmd, io.Reader, error)
 }
 
+// SetupOptions constains settings specific to the ansible run controller.
+type SetupOptions struct {
+	AnsibleCollectionsPath string
+	AnsibleRolesPath       string
+	Timeout                time.Duration
+	ArtifactsHistoryLimit  int
+}
+
 // Setup adds a controller that reconciles AnsibleRun managed resources.
-func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansibleRolesPath string, timeout time.Duration, artifactsHistoryLimit int) error {
+func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
 	name := managed.ControllerName(v1alpha1.AnsibleRunGroupKind)
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
@@ -114,9 +122,9 @@ func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansib
 				WorkingDirPath:        dir,
 				GalaxyBinary:          galaxyBinary,
 				RunnerBinary:          runnerBinary,
-				CollectionsPath:       ansibleCollectionsPath,
-				RolesPath:             ansibleRolesPath,
-				ArtifactsHistoryLimit: artifactsHistoryLimit,
+				CollectionsPath:       s.AnsibleCollectionsPath,
+				RolesPath:             s.AnsibleRolesPath,
+				ArtifactsHistoryLimit: s.ArtifactsHistoryLimit,
 			}
 		},
 	}
@@ -125,7 +133,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, ansibleCollectionsPath, ansib
 		resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind),
 		managed.WithExternalConnecter(c),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
-		managed.WithTimeout(timeout),
+		managed.WithTimeout(s.Timeout),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))))
 
 	return ctrl.NewControllerManagedBy(mgr).

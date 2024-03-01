@@ -18,11 +18,16 @@ package ansible
 
 import (
 	"context"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"gotest.tools/v3/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -120,6 +125,118 @@ func TestAnsibleRunPolicyInit(t *testing.T) {
 				}
 			}
 
+		})
+	}
+}
+
+func TestInit(t *testing.T) {
+	dir := t.TempDir()
+
+	fakePlaybook := "fake playbook"
+	run := &v1alpha1.AnsibleRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				AnnotationKeyPolicyRun: "ObserveAndDelete",
+			},
+		},
+		Spec: v1alpha1.AnsibleRunSpec{
+			ForProvider: v1alpha1.AnsibleRunParameters{
+				PlaybookInline: &fakePlaybook,
+			},
+		},
+	}
+
+	params := Parameters{
+		RunnerBinary:          "fake-runner",
+		WorkingDirPath:        dir,
+		ArtifactsHistoryLimit: 3,
+	}
+
+	expectedRunner := &Runner{
+		Path:                  dir,
+		cmdFunc:               params.playbookCmdFunc(context.Background(), "playbook.yml", dir),
+		AnsibleEnvDir:         filepath.Join(dir, "env"),
+		AnsibleRunPolicy:      &RunPolicy{"ObserveAndDelete"},
+		artifactsHistoryLimit: 3,
+	}
+
+	runner, err := params.Init(context.Background(), run, nil)
+	if err != nil {
+		t.Fatalf("Unexpected Init() error: %v", err)
+	}
+
+	if diff := cmp.Diff(expectedRunner, runner, cmpopts.IgnoreUnexported(Runner{})); diff != "" {
+		t.Errorf("Unexpected Runner -want, +got:\n%s\n", diff)
+	}
+	// check fields that couldn't be compared with cmp.Diff
+	if runner.artifactsHistoryLimit != expectedRunner.artifactsHistoryLimit {
+		t.Errorf("Unexpected Runner.artifactsHistoryLimit %v expected %v", runner.artifactsHistoryLimit, expectedRunner.artifactsHistoryLimit)
+	}
+	if runner.checkMode != expectedRunner.checkMode {
+		t.Errorf("Unexpected Runner.checkMode %v expected %v", runner.checkMode, expectedRunner.checkMode)
+	}
+
+	expectedCmd := expectedRunner.cmdFunc(nil, false)
+	cmd := runner.cmdFunc(nil, false)
+	if cmd.String() != expectedCmd.String() {
+		t.Errorf("Unexpected Runner.cmdFunc output %q expected %q", expectedCmd.String(), cmd.String())
+	}
+}
+
+func TestRun(t *testing.T) {
+	dir := t.TempDir()
+
+	runner := &Runner{
+		Path: dir,
+		cmdFunc: func(_ map[string]string, _ bool) *exec.Cmd {
+			// echo works well for testing cause it will just print all the args and flags it doesn't recognize and return success
+			return exec.CommandContext(context.Background(), "echo")
+		},
+		AnsibleEnvDir:         filepath.Join(dir, "env"),
+		AnsibleRunPolicy:      &RunPolicy{"ObserveAndDelete"},
+		artifactsHistoryLimit: 3,
+	}
+
+	expectedArgs := []string{"--rotate-artifacts", "3"}
+	expectedCmd := exec.Command(runner.cmdFunc(nil, false).Path, expectedArgs...)
+
+	testCases := map[string]struct {
+		checkMode      bool
+		expectedOutput string
+	}{
+		"WithoutCheckMode": {
+			expectedOutput: "",
+		},
+		"WithCheckMode": {
+			checkMode:      true,
+			expectedOutput: strings.Join(expectedArgs, " ") + "\n",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			runner.checkMode = tc.checkMode
+			cmd, outBuf, err := runner.Run()
+			if err != nil {
+				t.Fatalf("Unexpected Run() error: %v", err)
+			}
+
+			if cmd.String() != expectedCmd.String() {
+				t.Errorf("Unexpected command %q expected %q", expectedCmd.String(), cmd.String())
+			}
+
+			if err := cmd.Wait(); err != nil {
+				t.Fatalf("Unexpected cmd.Wait() error: %v", err)
+			}
+
+			out, err := io.ReadAll(outBuf)
+			if err != nil {
+				t.Fatalf("Unexpected error reading command buffer: %v", err)
+			}
+
+			if string(out) != tc.expectedOutput {
+				t.Errorf("Unexpected output in the command buffer %q, want %q", string(out), tc.expectedOutput)
+			}
 		})
 	}
 }

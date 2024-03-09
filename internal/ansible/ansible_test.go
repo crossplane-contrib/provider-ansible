@@ -18,6 +18,7 @@ package ansible
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -28,6 +29,7 @@ import (
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/google/uuid"
 	"gotest.tools/v3/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -155,7 +157,7 @@ func TestInit(t *testing.T) {
 	expectedRunner := &Runner{
 		Path:                  dir,
 		cmdFunc:               params.playbookCmdFunc(context.Background(), "playbook.yml", dir),
-		AnsibleEnvDir:         filepath.Join(dir, "env"),
+		workDir:               dir,
 		AnsibleRunPolicy:      &RunPolicy{"ObserveAndDelete"},
 		artifactsHistoryLimit: 3,
 	}
@@ -175,6 +177,9 @@ func TestInit(t *testing.T) {
 	if runner.checkMode != expectedRunner.checkMode {
 		t.Errorf("Unexpected Runner.checkMode %v expected %v", runner.checkMode, expectedRunner.checkMode)
 	}
+	if runner.workDir != expectedRunner.workDir {
+		t.Errorf("Unexpected Runner.workDir %v expected %v", runner.workDir, expectedRunner.workDir)
+	}
 
 	expectedCmd := expectedRunner.cmdFunc(nil, false)
 	cmd := runner.cmdFunc(nil, false)
@@ -189,16 +194,18 @@ func TestRun(t *testing.T) {
 	runner := &Runner{
 		Path: dir,
 		cmdFunc: func(_ map[string]string, _ bool) *exec.Cmd {
-			// echo works well for testing cause it will just print all the args and flags it doesn't recognize and return success
+			// echo works well for testing cause it will just print all the args and flags it doesn't recognize and return success,
+			// therefore checking its output also checks the args passed to it are correct
 			return exec.CommandContext(context.Background(), "echo")
 		},
-		AnsibleEnvDir:         filepath.Join(dir, "env"),
 		AnsibleRunPolicy:      &RunPolicy{"ObserveAndDelete"},
 		artifactsHistoryLimit: 3,
 	}
 
-	expectedArgs := []string{"--rotate-artifacts", "3"}
-	expectedCmd := exec.Command(runner.cmdFunc(nil, false).Path, expectedArgs...)
+	expectedID := "217b3830-68fa-461b-90d1-1fb87c685010"
+	expectedArgs := []string{"--rotate-artifacts", "3", "--ident", expectedID}
+
+	generateUUID = func() uuid.UUID { return uuid.MustParse(expectedID) }
 
 	testCases := map[string]struct {
 		checkMode      bool
@@ -216,17 +223,9 @@ func TestRun(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			runner.checkMode = tc.checkMode
-			cmd, outBuf, err := runner.Run()
+			outBuf, err := runner.Run(context.Background())
 			if err != nil {
 				t.Fatalf("Unexpected Run() error: %v", err)
-			}
-
-			if cmd.String() != expectedCmd.String() {
-				t.Errorf("Unexpected command %q expected %q", expectedCmd.String(), cmd.String())
-			}
-
-			if err := cmd.Wait(); err != nil {
-				t.Fatalf("Unexpected cmd.Wait() error: %v", err)
 			}
 
 			out, err := io.ReadAll(outBuf)
@@ -236,6 +235,82 @@ func TestRun(t *testing.T) {
 
 			if string(out) != tc.expectedOutput {
 				t.Errorf("Unexpected output in the command buffer %q, want %q", string(out), tc.expectedOutput)
+			}
+		})
+	}
+}
+
+func TestExtractFailureReason(t *testing.T) {
+	playbookStartEvt := `
+	{
+		"uuid": "63a52ed5-a403-4512-a430-c95f62fa3424",
+		"event": "playbook_on_start",
+		"event_data": {
+			"playbook": "playbook.yml"
+		}
+	}
+	`
+
+	runnerFailedEvt := `
+	{
+		"uuid": "7097758b-1109-4fd9-af59-f545633794dd",
+		"event": "runner_on_failed",
+		"event_data": {
+			"play": "test",
+			"task": "file",
+			"host": "testhost",
+			"res": {"msg": "fake error"}
+		}
+	}
+	`
+
+	runnerUnreachableEvt := `
+	{
+		"uuid": "ded6289b-e557-48c1-88e1-88eb630aec21",
+		"event": "runner_on_unreachable",
+		"event_data": {
+			"play": "test",
+			"task": "Gathering Facts",
+			"host": "testhost",
+			"res": {"msg": "Failed to connect to the host via ssh"}
+		}
+	}
+	`
+
+	cases := map[string]struct {
+		events         []string
+		expectedReason string
+	}{
+		"NoEvents": {},
+		"NoFailedEvents": {
+			events: []string{playbookStartEvt},
+		},
+		"FailedEvent": {
+			events:         []string{playbookStartEvt, runnerFailedEvt},
+			expectedReason: `Failed on play "test", task "file", host "testhost": fake error`,
+		},
+		"UnreachableEvent": {
+			events:         []string{playbookStartEvt, runnerUnreachableEvt},
+			expectedReason: `Unreachable on play "test", task "Gathering Facts", host "testhost": Failed to connect to the host via ssh`,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			for i, evt := range tc.events {
+				if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.json", i)), []byte(evt), 0600); err != nil {
+					t.Fatalf("Writing test event to file: %v", err)
+				}
+			}
+
+			reason, err := extractFailureReason(context.Background(), dir)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if reason != tc.expectedReason {
+				t.Errorf("Unexpected reason %v, expected %v", reason, tc.expectedReason)
 			}
 		})
 	}

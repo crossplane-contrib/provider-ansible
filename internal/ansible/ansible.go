@@ -28,6 +28,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
@@ -36,7 +37,9 @@ import (
 	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
+	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
@@ -52,6 +55,9 @@ const (
 	errMarshalContentVars = "cannot marshal ContentVars into yaml document"
 	errMkdir              = "cannot make directory"
 )
+
+// using a variable for uuid generator allows for stubbing in tests
+var generateUUID = uuid.New
 
 const (
 	// AnnotationKeyPolicyRun is the name of an annotation which instructs
@@ -133,10 +139,10 @@ func withBehaviorVars(behaviorVars map[string]string) runnerOption {
 	}
 }
 
-// withAnsibleEnvDir set the runner env/extravars dir.
-func withAnsibleEnvDir(dir string) runnerOption {
+// withWorkDir set the runner working dir.
+func withWorkDir(dir string) runnerOption {
 	return func(r *Runner) {
-		r.AnsibleEnvDir = dir
+		r.workDir = dir
 	}
 }
 
@@ -312,14 +318,16 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 		return nil, err
 	}
 
-	return new(withPath(path),
+	r := new(withPath(path),
 		withCmdFunc(cmdFunc),
 		withBehaviorVars(behaviorVars),
 		withAnsibleRunPolicy(rPolicy),
 		// TODO should be moved to connect() func
-		withAnsibleEnvDir(ansibleEnvDir),
+		withWorkDir(p.WorkingDirPath),
 		withArtifactsHistoryLimit(p.ArtifactsHistoryLimit),
-	), nil
+	)
+
+	return r, nil
 }
 
 // Runner struct holds the configuration to run the cmdFunc
@@ -327,7 +335,7 @@ type Runner struct {
 	Path                  string // absolute path on disk to a playbook or role depending on what cmdFunc expects
 	behaviorVars          map[string]string
 	cmdFunc               cmdFuncType // returns a Cmd that runs ansible-runner
-	AnsibleEnvDir         string
+	workDir               string
 	checkMode             bool
 	AnsibleRunPolicy      *RunPolicy
 	artifactsHistoryLimit int
@@ -350,8 +358,12 @@ func (r *Runner) GetAnsibleRunPolicy() *RunPolicy {
 	return r.AnsibleRunPolicy
 }
 
+func (r *Runner) ansibleEnvDir() string {
+	return filepath.Clean(filepath.Join(r.workDir, "env"))
+}
+
 // Run execute the appropriate cmdFunc
-func (r *Runner) Run() (*exec.Cmd, io.Reader, error) {
+func (r *Runner) Run(ctx context.Context) (io.Reader, error) {
 	var (
 		stdoutBuf                  bytes.Buffer
 		stdoutWriter, stderrWriter io.Writer
@@ -359,6 +371,10 @@ func (r *Runner) Run() (*exec.Cmd, io.Reader, error) {
 
 	dc := r.cmdFunc(r.behaviorVars, r.checkMode)
 	dc.Args = append(dc.Args, "--rotate-artifacts", strconv.Itoa(r.artifactsHistoryLimit))
+
+	id := generateUUID().String()
+	dc.Args = append(dc.Args, "--ident", id)
+
 	if !r.checkMode {
 		// for disabled checkMode dc.Stdout and dc.Stderr are respectfully
 		// written to os.Stdout and os.Stdout for debugging purpose
@@ -383,10 +399,98 @@ func (r *Runner) Run() (*exec.Cmd, io.Reader, error) {
 
 	err := dc.Start()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return dc, &stdoutBuf, nil
+	if err := dc.Wait(); err != nil {
+		jobEventsDir := filepath.Clean(filepath.Join(r.workDir, "artifacts", id, "job_events"))
+		failureReason, reasonErr := extractFailureReason(ctx, jobEventsDir)
+		if reasonErr != nil {
+			log.FromContext(ctx).V(1).Info("extracting ansible failure message", "err", reasonErr)
+			return nil, err
+		}
+
+		return nil, fmt.Errorf("%w: %s", err, failureReason)
+	}
+
+	return &stdoutBuf, nil
+}
+
+func extractFailureReason(ctx context.Context, eventsDir string) (string, error) {
+	evts, err := parseEvents(ctx, eventsDir)
+	if err != nil {
+		return "", fmt.Errorf("parsing job events: %w", err)
+	}
+
+	var msgs []string
+	for _, evt := range evts {
+		switch evt.Event {
+		case eventTypeRunnerFailed:
+			m, err := runnerEventMessage(evt, "Failed")
+			if err != nil {
+				return "", err
+			}
+			msgs = append(msgs, m)
+		case eventTypeRunnerUnreachable:
+			m, err := runnerEventMessage(evt, "Unreachable")
+			if err != nil {
+				return "", err
+			}
+			msgs = append(msgs, m)
+		default:
+		}
+	}
+
+	return strings.Join(msgs, "; "), nil
+}
+
+func parseEvents(ctx context.Context, dir string) ([]jobEvent, error) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("reading job events directory %q: %w", dir, err)
+	}
+
+	evts := make([]jobEvent, 0)
+	for _, file := range files {
+		evtBytes, err := os.ReadFile(filepath.Clean(filepath.Join(dir, file.Name())))
+		if err != nil {
+			log.FromContext(ctx).V(1).Info("reading job event file", "filename", file.Name(), "err", err)
+			continue
+		}
+
+		var evt jobEvent
+		if err := json.Unmarshal(evtBytes, &evt); err != nil {
+			log.FromContext(ctx).V(1).Info("unmarshaling job event from file", "filename", file.Name(), "err", err)
+			continue
+		}
+		evts = append(evts, evt)
+	}
+
+	return evts, nil
+}
+
+func reunmarshal(data map[string]any, result any) error {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshaling: %w", err)
+	}
+
+	return json.Unmarshal(b, result)
+}
+
+func runnerEventMessage(evt jobEvent, reason string) (string, error) {
+	var evtData runnerEventData
+	if err := reunmarshal(evt.EventData, &evtData); err != nil {
+		return "", fmt.Errorf("unmarshaling job event %s as runner event: %w", evt.UUID, err)
+	}
+
+	return fmt.Sprintf("%s on play %q, task %q, host %q: %s",
+		reason,
+		evtData.Play,
+		evtData.Task,
+		evtData.Host,
+		evtData.Result.Msg), nil
+
 }
 
 // selectRolePath will determines the role path
@@ -435,7 +539,7 @@ func addFile(path string, content []byte) error {
 // WriteExtraVar write extra var to env/extravars under working directory
 // it creates a non-existent env/extravars file
 func (r *Runner) WriteExtraVar(extraVar map[string]interface{}) error {
-	extraVarsPath := filepath.Join(r.AnsibleEnvDir, "extravars")
+	extraVarsPath := filepath.Join(r.ansibleEnvDir(), "extravars")
 	contentVars := make(map[string]interface{})
 	data, err := os.ReadFile(filepath.Clean(extraVarsPath))
 	if err != nil {

@@ -56,6 +56,9 @@ const (
 	errMkdir              = "cannot make directory"
 )
 
+// using a variable for uuid generator allows for stubbing in tests
+var generateUUID = uuid.New
+
 const (
 	// AnnotationKeyPolicyRun is the name of an annotation which instructs
 	// the provider how to run the corresponding Ansible contents
@@ -333,7 +336,6 @@ type Runner struct {
 	behaviorVars          map[string]string
 	cmdFunc               cmdFuncType // returns a Cmd that runs ansible-runner
 	workDir               string
-	AnsibleEnvDir         string
 	checkMode             bool
 	AnsibleRunPolicy      *RunPolicy
 	artifactsHistoryLimit int
@@ -370,7 +372,7 @@ func (r *Runner) Run(ctx context.Context) (io.Reader, error) {
 	dc := r.cmdFunc(r.behaviorVars, r.checkMode)
 	dc.Args = append(dc.Args, "--rotate-artifacts", strconv.Itoa(r.artifactsHistoryLimit))
 
-	id := uuid.New().String()
+	id := generateUUID().String()
 	dc.Args = append(dc.Args, "--ident", id)
 
 	if !r.checkMode {
@@ -402,9 +404,10 @@ func (r *Runner) Run(ctx context.Context) (io.Reader, error) {
 
 	if err := dc.Wait(); err != nil {
 		jobEventsDir := filepath.Clean(filepath.Join(r.workDir, "artifacts", id, "job_events"))
-		failureReason, reasonErr := extractFailureReason(jobEventsDir)
+		failureReason, reasonErr := extractFailureReason(ctx, jobEventsDir)
 		if reasonErr != nil {
-			log.FromContext(ctx).Error(err, "extracting ansible failure message")
+			log.FromContext(ctx).V(1).Info("extracting ansible failure message", "err", reasonErr)
+			return nil, err
 		}
 
 		return nil, fmt.Errorf("%w: %s", err, failureReason)
@@ -413,8 +416,8 @@ func (r *Runner) Run(ctx context.Context) (io.Reader, error) {
 	return &stdoutBuf, nil
 }
 
-func extractFailureReason(eventsDir string) (string, error) {
-	evts, err := parseEvents(eventsDir)
+func extractFailureReason(ctx context.Context, eventsDir string) (string, error) {
+	evts, err := parseEvents(ctx, eventsDir)
 	if err != nil {
 		return "", fmt.Errorf("parsing job events: %w", err)
 	}
@@ -441,24 +444,26 @@ func extractFailureReason(eventsDir string) (string, error) {
 	return strings.Join(msgs, "; "), nil
 }
 
-func parseEvents(dir string) ([]jobEvent, error) {
+func parseEvents(ctx context.Context, dir string) ([]jobEvent, error) {
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("reading job events directory: %w", err)
+		return nil, fmt.Errorf("reading job events directory %q: %w", dir, err)
 	}
 
-	evts := make([]jobEvent, len(files))
-	for i, file := range files {
+	var evts []jobEvent
+	for _, file := range files {
 		evtBytes, err := os.ReadFile(filepath.Clean(filepath.Join(dir, file.Name())))
 		if err != nil {
-			return nil, fmt.Errorf("reading job event file %q: %w", file.Name(), err)
+			log.FromContext(ctx).V(1).Info("reading job event file", "filename", file.Name(), "err", err)
+			continue
 		}
 
 		var evt jobEvent
 		if err := json.Unmarshal(evtBytes, &evt); err != nil {
-			return nil, fmt.Errorf("unmarshaling job event from file %q: %w", file.Name(), err)
+			log.FromContext(ctx).V(1).Info("unmarshaling job event from file", "filename", file.Name(), "err", err)
+			continue
 		}
-		evts[i] = evt
+		evts = append(evts, evt)
 	}
 
 	return evts, nil

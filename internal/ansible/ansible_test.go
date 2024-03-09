@@ -29,6 +29,7 @@ import (
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/google/uuid"
 	"gotest.tools/v3/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -156,7 +157,7 @@ func TestInit(t *testing.T) {
 	expectedRunner := &Runner{
 		Path:                  dir,
 		cmdFunc:               params.playbookCmdFunc(context.Background(), "playbook.yml", dir),
-		AnsibleEnvDir:         filepath.Join(dir, "env"),
+		workDir:               dir,
 		AnsibleRunPolicy:      &RunPolicy{"ObserveAndDelete"},
 		artifactsHistoryLimit: 3,
 	}
@@ -176,6 +177,9 @@ func TestInit(t *testing.T) {
 	if runner.checkMode != expectedRunner.checkMode {
 		t.Errorf("Unexpected Runner.checkMode %v expected %v", runner.checkMode, expectedRunner.checkMode)
 	}
+	if runner.workDir != expectedRunner.workDir {
+		t.Errorf("Unexpected Runner.workDir %v expected %v", runner.workDir, expectedRunner.workDir)
+	}
 
 	expectedCmd := expectedRunner.cmdFunc(nil, false)
 	cmd := runner.cmdFunc(nil, false)
@@ -194,12 +198,14 @@ func TestRun(t *testing.T) {
 			// therefore checking its output also checks the args passed to it are correct
 			return exec.CommandContext(context.Background(), "echo")
 		},
-		AnsibleEnvDir:         filepath.Join(dir, "env"),
 		AnsibleRunPolicy:      &RunPolicy{"ObserveAndDelete"},
 		artifactsHistoryLimit: 3,
 	}
 
-	expectedArgs := []string{"--rotate-artifacts", "3"}
+	expectedID := "217b3830-68fa-461b-90d1-1fb87c685010"
+	expectedArgs := []string{"--rotate-artifacts", "3", "--ident", expectedID}
+
+	generateUUID = func() uuid.UUID { return uuid.MustParse(expectedID) }
 
 	testCases := map[string]struct {
 		checkMode      bool

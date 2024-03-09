@@ -304,7 +304,7 @@ func TestExtractFailureReason(t *testing.T) {
 				}
 			}
 
-			reason, err := extractFailureReason(dir)
+			reason, err := extractFailureReason(context.Background(), dir)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}

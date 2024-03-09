@@ -757,6 +757,9 @@ func TestCreateOrUpdate(t *testing.T) {
 				mg: &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
+				kube: &test.MockClient{
+					MockStatusUpdate: test.NewMockSubResourceUpdateFn(nil),
+				},
 				runner: &MockRunner{
 					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
 						return &ansible.RunPolicy{
@@ -809,6 +812,9 @@ func TestCreateOrUpdate(t *testing.T) {
 				mg:  &v1alpha1.AnsibleRun{},
 			},
 			fields: fields{
+				kube: &test.MockClient{
+					MockStatusUpdate: test.NewMockSubResourceUpdateFn(nil),
+				},
 				runner: &MockRunner{
 					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
 						return &ansible.RunPolicy{

@@ -450,7 +450,7 @@ func parseEvents(ctx context.Context, dir string) ([]jobEvent, error) {
 		return nil, fmt.Errorf("reading job events directory %q: %w", dir, err)
 	}
 
-	var evts []jobEvent
+	evts := make([]jobEvent, 0)
 	for _, file := range files {
 		evtBytes, err := os.ReadFile(filepath.Clean(filepath.Join(dir, file.Name())))
 		if err != nil {

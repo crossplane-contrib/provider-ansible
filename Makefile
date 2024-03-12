@@ -14,27 +14,25 @@ PLATFORMS ?= linux_amd64 linux_arm64
 # ====================================================================================
 # Setup Go
 
-GO_REQUIRED_VERSION = 1.19
+GO_REQUIRED_VERSION = 1.21
 NPROCS ?= 1
 GO_TEST_PARALLEL := $(shell echo $$(( $(NPROCS) / 2 )))
 GO_STATIC_PACKAGES = $(GO_PROJECT)/cmd/provider
 GO_LDFLAGS += -X $(GO_PROJECT)/internal/version.Version=$(VERSION)
 GO_SUBDIRS += cmd internal apis
 GO111MODULE = on
-GOLANGCILINT_VERSION = 1.52.2
+GOLANGCILINT_VERSION = 1.56.2
 RUNNING_IN_CI = true
 -include build/makelib/golang.mk
 
 # ====================================================================================
 # Setup Kubernetes tools
 
-UP_VERSION = v0.14.0
-UP_CHANNEL = stable
 -include build/makelib/k8s_tools.mk
 
 # ====================================================================================
 # Setup Images
-
+REGISTRY_ORGS ?= xpkg.upbound.io/upbound
 IMAGES = provider-ansible
 -include build/makelib/imagelight.mk
 

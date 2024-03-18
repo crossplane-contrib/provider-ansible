@@ -389,7 +389,7 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.ExternalCreation, error) {
 	// No difference from the provider side which lifecycle method to choose in this case of Create() or Update()
 	u, err := c.Update(ctx, mg)
-	return managed.ExternalCreation{ConnectionDetails: u.ConnectionDetails}, err
+	return managed.ExternalCreation(u), err
 }
 
 func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.ExternalUpdate, error) {

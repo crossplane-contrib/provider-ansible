@@ -29,17 +29,14 @@ func (mg *AnsibleRun) GetDeletionPolicy() xpv1.DeletionPolicy {
 	return mg.Spec.DeletionPolicy
 }
 
+// GetManagementPolicies of this AnsibleRun.
+func (mg *AnsibleRun) GetManagementPolicies() xpv1.ManagementPolicies {
+	return mg.Spec.ManagementPolicies
+}
+
 // GetProviderConfigReference of this AnsibleRun.
 func (mg *AnsibleRun) GetProviderConfigReference() *xpv1.Reference {
 	return mg.Spec.ProviderConfigReference
-}
-
-/*
-GetProviderReference of this AnsibleRun.
-Deprecated: Use GetProviderConfigReference.
-*/
-func (mg *AnsibleRun) GetProviderReference() *xpv1.Reference {
-	return mg.Spec.ProviderReference
 }
 
 // GetPublishConnectionDetailsTo of this AnsibleRun.
@@ -62,17 +59,14 @@ func (mg *AnsibleRun) SetDeletionPolicy(r xpv1.DeletionPolicy) {
 	mg.Spec.DeletionPolicy = r
 }
 
+// SetManagementPolicies of this AnsibleRun.
+func (mg *AnsibleRun) SetManagementPolicies(r xpv1.ManagementPolicies) {
+	mg.Spec.ManagementPolicies = r
+}
+
 // SetProviderConfigReference of this AnsibleRun.
 func (mg *AnsibleRun) SetProviderConfigReference(r *xpv1.Reference) {
 	mg.Spec.ProviderConfigReference = r
-}
-
-/*
-SetProviderReference of this AnsibleRun.
-Deprecated: Use SetProviderConfigReference.
-*/
-func (mg *AnsibleRun) SetProviderReference(r *xpv1.Reference) {
-	mg.Spec.ProviderReference = r
 }
 
 // SetPublishConnectionDetailsTo of this AnsibleRun.

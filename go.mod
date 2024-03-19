@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/apenella/go-ansible v1.3.0
-	github.com/crossplane/crossplane-runtime v1.14.3
+	github.com/crossplane/crossplane-runtime v1.15.1
 	github.com/crossplane/crossplane-tools v0.0.0-20230925130601-628280f8bf79
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
@@ -14,8 +14,8 @@ require (
 	gotest.tools/v3 v3.5.1
 	k8s.io/api v0.29.3
 	k8s.io/apimachinery v0.29.3
-	sigs.k8s.io/controller-runtime v0.16.3
-	sigs.k8s.io/controller-tools v0.13.0
+	sigs.k8s.io/controller-runtime v0.17.0
+	sigs.k8s.io/controller-tools v0.14.0
 )
 
 require (
@@ -28,6 +28,7 @@ require (
 	github.com/dave/jennifer v1.4.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
+	github.com/evanphx/json-patch v5.6.0+incompatible // indirect
 	github.com/evanphx/json-patch/v5 v5.8.0 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect

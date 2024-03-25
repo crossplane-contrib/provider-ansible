@@ -4,8 +4,8 @@ github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751 h1:JYp7IbQjafo
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 h1:s6gZFSlWYmbqAuRjVTiNNhvNRfY2Wxp9nhfyel4rklc=
 github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137/go.mod h1:OMCwj8VM1Kc9e19TLln2VL61YJF0x1XFtfdL4JdbSyE=
-github.com/apenella/go-ansible v1.2.0 h1:tZf2RMaoZE15ys+3pkCBgTRffVjRNmR0gQarbRQgS4s=
-github.com/apenella/go-ansible v1.2.0/go.mod h1:+RsBk+35iEWfp2iFhsdZ9JTE9KNbuPjIILyO6UQHV3E=
+github.com/apenella/go-ansible v1.3.0 h1:INNaVzrgQMNIO9Yvnly6lA5KfN/pY3m1Z37gpmlUzPM=
+github.com/apenella/go-ansible v1.3.0/go.mod h1:qiLWolQqLkCoqFlPvdsKhxk7O0qjIBCPNhUKpH/vjaU=
 github.com/apenella/go-common-utils/error v0.0.0-20220913191136-86daaa87e7df h1:SvlYbjlsSQDS7hbVT1h012/zdgvcwWJ+Yd9XRiiY/8s=
 github.com/apenella/go-common-utils/error v0.0.0-20220913191136-86daaa87e7df/go.mod h1:+3dyIlHX350xJIUIffwMLswZXU+N2FwDE05VuKqxYdw=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=

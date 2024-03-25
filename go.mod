@@ -3,7 +3,7 @@ module github.com/crossplane-contrib/provider-ansible
 go 1.21
 
 require (
-	github.com/apenella/go-ansible v1.2.0
+	github.com/apenella/go-ansible v1.3.0
 	github.com/crossplane/crossplane-runtime v1.14.3
 	github.com/crossplane/crossplane-tools v0.0.0-20230925130601-628280f8bf79
 	github.com/google/go-cmp v0.6.0

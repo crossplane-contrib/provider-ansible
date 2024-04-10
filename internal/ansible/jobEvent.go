@@ -16,10 +16,11 @@ type jobEvent struct {
 }
 
 type runnerEventData struct {
-	Play   string       `json:"play"`
-	Task   string       `json:"task"`
-	Host   string       `json:"host"`
-	Result runnerResult `json:"res"`
+	Play         string       `json:"play"`
+	Task         string       `json:"task"`
+	Host         string       `json:"host"`
+	Result       runnerResult `json:"res"`
+	IgnoreErrors bool         `json:"ignore_errors"`
 }
 
 type runnerResult struct {

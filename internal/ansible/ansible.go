@@ -430,13 +430,17 @@ func extractFailureReason(ctx context.Context, eventsDir string) (string, error)
 			if err != nil {
 				return "", err
 			}
-			msgs = append(msgs, m)
+			if m != "" {
+				msgs = append(msgs, m)
+			}
 		case eventTypeRunnerUnreachable:
 			m, err := runnerEventMessage(evt, "Unreachable")
 			if err != nil {
 				return "", err
 			}
-			msgs = append(msgs, m)
+			if m != "" {
+				msgs = append(msgs, m)
+			}
 		default:
 		}
 	}
@@ -482,6 +486,9 @@ func runnerEventMessage(evt jobEvent, reason string) (string, error) {
 	var evtData runnerEventData
 	if err := reunmarshal(evt.EventData, &evtData); err != nil {
 		return "", fmt.Errorf("unmarshaling job event %s as runner event: %w", evt.UUID, err)
+	}
+	if evtData.IgnoreErrors {
+		return "", nil
 	}
 
 	return fmt.Sprintf("%s on play %q, task %q, host %q: %s",

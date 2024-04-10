@@ -264,6 +264,20 @@ func TestExtractFailureReason(t *testing.T) {
 	}
 	`
 
+	runnerFailedIgnoreErrorsEvt := `
+	{
+		"uuid": "7097758b-1109-4fd9-af59-f545633794dd",
+		"event": "runner_on_failed",
+		"event_data": {
+			"play": "test",
+			"task": "file",
+			"host": "testhost",
+			"res": {"msg": "fake error"},
+			"ignore_errors": true
+		}
+	}
+	`
+
 	runnerUnreachableEvt := `
 	{
 		"uuid": "ded6289b-e557-48c1-88e1-88eb630aec21",
@@ -288,6 +302,10 @@ func TestExtractFailureReason(t *testing.T) {
 		"FailedEvent": {
 			events:         []string{playbookStartEvt, runnerFailedEvt},
 			expectedReason: `Failed on play "test", task "file", host "testhost": fake error`,
+		},
+		"FailedEventWithIgnoreErrors": {
+			events:         []string{playbookStartEvt, runnerFailedIgnoreErrorsEvt},
+			expectedReason: "",
 		},
 		"UnreachableEvent": {
 			events:         []string{playbookStartEvt, runnerUnreachableEvt},

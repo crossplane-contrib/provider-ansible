@@ -28,6 +28,12 @@ RUNNING_IN_CI = true
 # ====================================================================================
 # Setup Kubernetes tools
 
+# Uncomment below to override the versions from the build module
+# KIND_VERSION = v0.15.0
+UP_VERSION = v0.28.0
+# UP_CHANNEL = stable
+UPTEST_VERSION = v0.5.0
+CROSSPLANE_VERSION = 1.16.0
 -include build/makelib/k8s_tools.mk
 
 # ====================================================================================
@@ -106,7 +112,7 @@ dev: $(KIND) $(KUBECTL)
 	@$(KIND) create cluster --name=$(PROJECT_NAME)-dev | true
 	@$(KUBECTL) cluster-info --context kind-$(PROJECT_NAME)-dev
 	@$(INFO) Installing Crossplane CRDs
-	@$(KUBECTL) apply -k https://github.com/crossplane/crossplane//cluster?ref=master
+	@$(KUBECTL) apply --server-side=true -k https://github.com/crossplane/crossplane//cluster?ref=v$(CROSSPLANE_VERSION)
 	@$(INFO) Installing Provider Ansible CRDs
 	@$(KUBECTL) apply -R -f package/crds
 	@$(INFO) Starting Provider Ansible controllers

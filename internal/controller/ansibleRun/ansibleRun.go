@@ -40,6 +40,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
+	"github.com/crossplane/crossplane-runtime/pkg/statemetrics"
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v2"
 	v1 "k8s.io/api/core/v1"
@@ -128,12 +129,24 @@ func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
 		},
 	}
 
-	r := managed.NewReconciler(mgr,
-		resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind),
+	opts := []managed.ReconcilerOption{
 		managed.WithExternalConnecter(c),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
 		managed.WithTimeout(s.Timeout),
-		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))))
+		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
+	}
+
+	if o.MetricOptions != nil {
+		opts = append(opts, managed.WithMetricRecorder(o.MetricOptions.MRMetrics))
+		if o.MetricOptions.MRStateMetrics != nil {
+			stateMetricsRecorder := statemetrics.NewMRStateRecorder(mgr.GetClient(), o.Logger, o.MetricOptions.MRStateMetrics, &v1alpha1.AnsibleRunList{}, o.MetricOptions.PollStateMetricInterval)
+			if err := mgr.Add(stateMetricsRecorder); err != nil {
+				return fmt.Errorf("cannot register MR state metrics recorder for kind v1alpha1.AnsibleRunList: %w", err)
+			}
+		}
+	}
+
+	r := managed.NewReconciler(mgr, resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind), opts...)
 
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(name).

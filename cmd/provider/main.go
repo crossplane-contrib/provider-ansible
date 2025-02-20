@@ -20,9 +20,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/crossplane-contrib/provider-ansible/apis"
-	ansible "github.com/crossplane-contrib/provider-ansible/internal/controller"
-	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/pkg/feature"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
@@ -34,6 +31,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
+
+	"github.com/crossplane-contrib/provider-ansible/apis"
+	ansible "github.com/crossplane-contrib/provider-ansible/internal/controller"
+	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 )
 
 func main() {

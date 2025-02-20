@@ -35,13 +35,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
-	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
-	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
+
+	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
+	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 )
 
 const (
@@ -409,13 +410,13 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
+						MockInit: func(_ context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
 							return nil, errBoom
 						},
-						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
+						MockGalaxyInstall: func(_ context.Context, _ map[string]string, requirementsType string) error {
 							return nil
 						},
-						MockAddFile: func(path string, content []byte) error {
+						MockAddFile: func(_ string, _ []byte) error {
 							return nil
 						},
 					}
@@ -448,13 +449,13 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
+						MockInit: func(_ context.Context, _ *v1alpha1.AnsibleRun, _ map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
-						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
+						MockGalaxyInstall: func(_ context.Context, _ map[string]string, _ string) error {
 							return errBoom
 						},
-						MockAddFile: func(path string, content []byte) error {
+						MockAddFile: func(_ string, _ []byte) error {
 							return nil
 						},
 					}
@@ -482,13 +483,13 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
+						MockInit: func(_ context.Context, _ *v1alpha1.AnsibleRun, _ map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
-						MockGalaxyInstall: func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
+						MockGalaxyInstall: func(_ context.Context, _ map[string]string, _ string) error {
 							return nil
 						},
-						MockAddFile: func(path string, content []byte) error {
+						MockAddFile: func(_ string, _ []byte) error {
 							return nil
 						},
 					}

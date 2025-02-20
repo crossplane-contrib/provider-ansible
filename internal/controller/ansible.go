@@ -17,9 +17,10 @@ limitations under the License.
 package controller
 
 import (
-	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	ctrl "sigs.k8s.io/controller-runtime"
+
+	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 
 	"github.com/crossplane-contrib/provider-ansible/internal/controller/config"
 )

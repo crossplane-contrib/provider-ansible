@@ -29,10 +29,6 @@ import (
 	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
-	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
-	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
-	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/pkg/event"
@@ -49,6 +45,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
+	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
+	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 )
 
 const (

@@ -26,13 +26,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
 	"gotest.tools/v3/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 )
 
 const (

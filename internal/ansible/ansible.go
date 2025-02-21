@@ -32,14 +32,15 @@ import (
 	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
-	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
-	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
+	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 )
 
 const (
@@ -318,7 +319,7 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 		return nil, err
 	}
 
-	r := new(withPath(path),
+	r := newRunner(withPath(path),
 		withCmdFunc(cmdFunc),
 		withBehaviorVars(behaviorVars),
 		withAnsibleRunPolicy(rPolicy),
@@ -341,8 +342,8 @@ type Runner struct {
 	artifactsHistoryLimit int
 }
 
-// new returns a runner that will be used as ansible-runner client
-func new(o ...runnerOption) *Runner {
+// newRunner returns a runner that will be used as ansible-runner client
+func newRunner(o ...runnerOption) *Runner {
 
 	r := &Runner{}
 

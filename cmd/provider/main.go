@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -50,6 +51,7 @@ func main() {
 		maxReconcileRate        = app.Flag("max-reconcile-rate", "The maximum number of concurrent reconciliation operations.").Default("1").Int()
 		artifactsHistoryLimit   = app.Flag("artifacts-history-limit", "Each attempt to run the playbook/role generates a set of artifacts on disk. This settings limits how many of these to keep.").Default("10").Int()
 		pollStateMetricInterval = app.Flag("poll-state-metric", "State metric recording interval").Default("5s").Duration()
+		replicasCount           = app.Flag("replicas", "Amount of replicas configured for the provider. When using more than 1 replica, reconciles will be sharded across them based on a modular hash.").Default("1").Int()
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -95,12 +97,16 @@ func main() {
 		},
 	}
 
+	providerCtx, cancel := context.WithCancel(context.Background())
 	ansibleOpts := ansiblerun.SetupOptions{
 		AnsibleCollectionsPath: *ansibleCollectionsPath,
 		AnsibleRolesPath:       *ansibleRolesPath,
 		Timeout:                *timeout,
 		ArtifactsHistoryLimit:  *artifactsHistoryLimit,
+		ReplicasCount:          *replicasCount,
+		ProviderCtx:            providerCtx,
+		ProviderCancel:         cancel,
 	}
 	kingpin.FatalIfError(ansible.Setup(mgr, o, ansibleOpts), "Cannot setup Ansible controllers")
-	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
+	kingpin.FatalIfError(mgr.Start(providerCtx), "Cannot start controller manager")
 }

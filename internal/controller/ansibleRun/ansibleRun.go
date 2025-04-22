@@ -47,7 +47,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -574,7 +574,7 @@ func (c *connector) releaseLease(ctx context.Context, kube client.Client, index 
 func (c *connector) acquireLease(ctx context.Context, kube client.Client, index int) error {
 	lease := &coordinationv1.Lease{}
 	leaseName := c.generateLeaseName(index)
-	leaseDurationSeconds := pointer.Int32(leaseDurationSeconds)
+	leaseDurationSeconds := ptr.To(int32(leaseDurationSeconds))
 
 	ns := "upbound-system"
 
@@ -611,7 +611,7 @@ func (c *connector) acquireLease(ctx context.Context, kube client.Client, index 
 	}
 
 	// Update the lease to acquire it
-	lease.Spec.HolderIdentity = pointer.String(c.replicaID)
+	lease.Spec.HolderIdentity = ptr.To(c.replicaID)
 	lease.Spec.RenewTime = &metav1.MicroTime{Time: time.Now()}
 	lease.Spec.LeaseDurationSeconds = leaseDurationSeconds
 	if err := kube.Update(ctx, lease); err != nil {
@@ -627,10 +627,9 @@ func (c *connector) acquireLease(ctx context.Context, kube client.Client, index 
 }
 
 // Finds an available shard and acquires a lease for it. Will attempt to obtain one indefinitely.
-// This will also start a background go-routine to renew the lease continiously and release it when the process receives a shutdown signal
+// This will also start a background go-routine to renew the lease continuously and release it when the process receives a shutdown signal
 func (c *connector) acquireAndHoldShard(o controller.Options, s SetupOptions) (int, error) {
 	ctx := s.ProviderCtx
-	acquiredLease := false
 	currentShard := -1
 
 	cfg := ctrl.GetConfigOrDie()
@@ -640,12 +639,11 @@ func (c *connector) acquireAndHoldShard(o controller.Options, s SetupOptions) (i
 	}
 
 AcquireLease:
-	for !acquiredLease {
+	for {
 		for i := 0; i < s.ReplicasCount; i++ {
 			if err := c.acquireLease(ctx, kube, i); err == nil {
 				currentShard = i
 				o.Logger.Debug("acquired lease", "id", i)
-				acquiredLease = true
 				go func() {
 					sigHandler := ctrl.SetupSignalHandler()
 

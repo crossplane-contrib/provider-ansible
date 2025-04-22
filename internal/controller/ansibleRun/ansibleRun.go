@@ -32,17 +32,22 @@ import (
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/pkg/event"
+	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/pkg/statemetrics"
+	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v2"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -50,6 +55,7 @@ import (
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
 	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
 	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
+	"github.com/crossplane-contrib/provider-ansible/pkg/shardutil"
 )
 
 const (
@@ -76,6 +82,13 @@ const (
 )
 
 const (
+	leaseNameTemplate           = "provider-ansible-lease-%d"
+	leaseDurationSeconds        = 30
+	leaseRenewalInterval        = 5 * time.Second
+	leaseAcquireAttemptInterval = 5 * time.Second
+)
+
+const (
 	baseWorkingDir = "/ansibleDir"
 )
 
@@ -97,6 +110,9 @@ type SetupOptions struct {
 	AnsibleRolesPath       string
 	Timeout                time.Duration
 	ArtifactsHistoryLimit  int
+	ReplicasCount          int
+	ProviderCtx            context.Context
+	ProviderCancel         context.CancelFunc
 }
 
 // Setup adds a controller that reconciles AnsibleRun managed resources.
@@ -128,6 +144,8 @@ func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
 				ArtifactsHistoryLimit: s.ArtifactsHistoryLimit,
 			}
 		},
+		replicaID: uuid.New().String(),
+		logger:    o.Logger,
 	}
 
 	opts := []managed.ReconcilerOption{
@@ -149,20 +167,28 @@ func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
 
 	r := managed.NewReconciler(mgr, resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind), opts...)
 
+	currentShard, err := c.acquireAndHoldShard(o, s)
+	if err != nil {
+		return fmt.Errorf("cannot acquire and hold shard: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(name).
 		WithOptions(o.ForControllerRuntime()).
 		For(&v1alpha1.AnsibleRun{}).
+		WithEventFilter(shardutil.IsResourceForShard(currentShard, s.ReplicasCount)).
 		Complete(ratelimiter.NewReconciler(name, r, o.GlobalRateLimiter))
 }
 
 // A connector is expected to produce an ExternalClient when its Connect method
 // is called.
 type connector struct {
-	kube    client.Client
-	usage   resource.Tracker
-	fs      afero.Afero
-	ansible func(dir string) params
+	kube      client.Client
+	usage     resource.Tracker
+	fs        afero.Afero
+	ansible   func(dir string) params
+	replicaID string
+	logger    logging.Logger
 }
 
 func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.ExternalClient, error) { //nolint:gocyclo
@@ -526,4 +552,129 @@ func addBehaviorVars(pc *v1alpha1.ProviderConfig) map[string]string {
 		behaviorVars[v.Key] = v.Value
 	}
 	return behaviorVars
+}
+
+func (c *connector) generateLeaseName(index int) string {
+	return fmt.Sprintf(leaseNameTemplate, index)
+}
+
+func (c *connector) releaseLease(ctx context.Context, kube client.Client, index int) error {
+	leaseName := c.generateLeaseName(index)
+	ns := "upbound-system"
+
+	lease := &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: leaseName},
+	}
+
+	return kube.Delete(ctx, lease)
+}
+
+// Attempts to acquire or renew a lease for the current replica ID
+// Returns an error when unable to obtain the lease
+func (c *connector) acquireLease(ctx context.Context, kube client.Client, index int) error {
+	lease := &coordinationv1.Lease{}
+	leaseName := c.generateLeaseName(index)
+	leaseDurationSeconds := ptr.To(int32(leaseDurationSeconds))
+
+	ns := "upbound-system"
+
+	if err := kube.Get(ctx, client.ObjectKey{Namespace: ns, Name: leaseName}, lease); err != nil {
+		if !kerrors.IsNotFound(err) {
+			return err
+		}
+
+		// Create a new Lease
+		lease = &coordinationv1.Lease{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      leaseName,
+				Namespace: ns,
+			},
+			Spec: coordinationv1.LeaseSpec{
+				HolderIdentity:       &c.replicaID,
+				RenewTime:            &metav1.MicroTime{Time: time.Now()},
+				LeaseDurationSeconds: leaseDurationSeconds,
+			},
+		}
+		if err := kube.Create(ctx, lease); err != nil {
+			return err
+		}
+		c.logger.Debug("created lease", "lease", lease)
+		return nil
+	}
+
+	// Check if the lease is held by another replica and is not expired
+	if lease.Spec.HolderIdentity != nil && *lease.Spec.HolderIdentity != c.replicaID {
+		if lease.Spec.RenewTime != nil && time.Since(lease.Spec.RenewTime.Time) < time.Duration(*lease.Spec.LeaseDurationSeconds)*time.Second {
+			// Lease is held by another replica and is not expired
+			return fmt.Errorf("lease is still held by %s", *lease.Spec.HolderIdentity)
+		}
+	}
+
+	// Update the lease to acquire it
+	lease.Spec.HolderIdentity = ptr.To(c.replicaID)
+	lease.Spec.RenewTime = &metav1.MicroTime{Time: time.Now()}
+	lease.Spec.LeaseDurationSeconds = leaseDurationSeconds
+	if err := kube.Update(ctx, lease); err != nil {
+		if kerrors.IsConflict(err) {
+			// Another replica updated the lease concurrently, retry
+			return err
+		}
+		return fmt.Errorf("failed to update lease: %w", err)
+	}
+
+	c.logger.Debug("updated lease", "lease", lease)
+	return nil
+}
+
+// Finds an available shard and acquires a lease for it. Will attempt to obtain one indefinitely.
+// This will also start a background go-routine to renew the lease continuously and release it when the process receives a shutdown signal
+func (c *connector) acquireAndHoldShard(o controller.Options, s SetupOptions) (int, error) {
+	ctx := s.ProviderCtx
+	currentShard := -1
+
+	cfg := ctrl.GetConfigOrDie()
+	kube, err := client.New(cfg, client.Options{})
+	if err != nil {
+		return currentShard, err
+	}
+
+AcquireLease:
+	for {
+		for i := 0; i < s.ReplicasCount; i++ {
+			if err := c.acquireLease(ctx, kube, i); err == nil {
+				currentShard = i
+				o.Logger.Debug("acquired lease", "id", i)
+				go func() {
+					sigHandler := ctrl.SetupSignalHandler()
+
+					for {
+						select {
+						case <-time.After(leaseRenewalInterval):
+							if err := c.acquireLease(ctx, kube, i); err != nil {
+								o.Logger.Info("failed to renew lease", "id", i, "err", err)
+								s.ProviderCancel()
+							} else {
+								o.Logger.Debug("renewed lease", "id", i)
+							}
+						case <-sigHandler.Done():
+							o.Logger.Info("controller is shutting down, releasing lease")
+							if err := c.releaseLease(ctx, kube, i); err != nil {
+								o.Logger.Info("failed to release lease", "lease", err)
+							}
+							o.Logger.Debug("released lease")
+							s.ProviderCancel()
+							return
+						}
+					}
+				}()
+				// Lease is acquired and background goroutine started for renewal, we can safely break to return the current shard
+				break AcquireLease
+			} else {
+				o.Logger.Debug("cannot acquire lease", "id", i, "err", err)
+				time.Sleep(leaseAcquireAttemptInterval)
+			}
+		}
+	}
+
+	return currentShard, nil
 }

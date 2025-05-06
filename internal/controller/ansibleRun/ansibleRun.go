@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -149,7 +148,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
 	}
 
 	opts := []managed.ReconcilerOption{
-		managed.WithExternalConnecter(c),
+		managed.WithTypedExternalConnector(c),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
 		managed.WithTimeout(s.Timeout),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
@@ -191,15 +190,10 @@ type connector struct {
 	logger    logging.Logger
 }
 
-func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.ExternalClient, error) { //nolint:gocyclo
+func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.TypedExternalClient[*v1alpha1.AnsibleRun], error) { //nolint:gocyclo
 	// NOTE(negz): This method is slightly over our complexity goal, but I
 	// can't immediately think of a clean way to decompose it without
 	// affecting readability.
-
-	cr, ok := mg.(*v1alpha1.AnsibleRun)
-	if !ok {
-		return nil, errors.New(errNotAnsibleRun)
-	}
 
 	// NOTE(negz): This directory will be garbage collected by the workdir
 	// garbage collector that is started in Setup.
@@ -208,7 +202,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		return nil, fmt.Errorf("%s: %s: %w", baseWorkingDir, errMkdir, err)
 	}
 
-	if err := c.usage.Track(ctx, mg); err != nil {
+	if err := c.usage.Track(ctx, cr); err != nil {
 		return nil, fmt.Errorf("%s: %w", errTrackPCUsage, err)
 	}
 
@@ -355,13 +349,14 @@ type external struct {
 	kube   client.Client
 }
 
+func (e *external) Disconnect(ctx context.Context) error {
+	// Unimplemented, required by newer versions of crossplane-runtime
+	return nil
+}
+
 // nolint: gocyclo
 // TODO reduce cyclomatic complexity
-func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
-	cr, ok := mg.(*v1alpha1.AnsibleRun)
-	if !ok {
-		return managed.ExternalObservation{}, errors.New(errNotAnsibleRun)
-	}
+func (c *external) Observe(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.ExternalObservation, error) {
 	/* set Deletion Policy to Orphan as we cannot observe the external resource.
 	   So we won't wait for external resource deletion before attempting
 	   to delete the managed resource */
@@ -426,18 +421,13 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	return managed.ExternalObservation{}, nil
 }
 
-func (c *external) Create(ctx context.Context, mg resource.Managed) (managed.ExternalCreation, error) {
+func (c *external) Create(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.ExternalCreation, error) {
 	// No difference from the provider side which lifecycle method to choose in this case of Create() or Update()
-	u, err := c.Update(ctx, mg)
+	u, err := c.Update(ctx, cr)
 	return managed.ExternalCreation(u), err
 }
 
-func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.ExternalUpdate, error) {
-	cr, ok := mg.(*v1alpha1.AnsibleRun)
-	if !ok {
-		return managed.ExternalUpdate{}, errors.New(errNotAnsibleRun)
-	}
-
+func (c *external) Update(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.ExternalUpdate, error) {
 	// disable checkMode for real action
 	c.runner.EnableCheckMode(false)
 	if err := c.runAnsible(ctx, cr); err != nil {
@@ -448,12 +438,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	return managed.ExternalUpdate{ConnectionDetails: nil}, nil
 }
 
-func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
-	cr, ok := mg.(*v1alpha1.AnsibleRun)
-	if !ok {
-		return errors.New(errNotAnsibleRun)
-	}
-
+func (c *external) Delete(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.ExternalDelete, error) {
 	cr.Status.SetConditions(xpv1.Deleting())
 
 	stateVar := make(map[string]string)
@@ -461,13 +446,13 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 	nestedMap := make(map[string]interface{})
 	nestedMap[cr.GetName()] = stateVar
 	if err := c.runner.WriteExtraVar(nestedMap); err != nil {
-		return err
+		return managed.ExternalDelete{}, err
 	}
 	_, err := c.runner.Run(ctx)
 	if err != nil {
-		return err
+		return managed.ExternalDelete{}, err
 	}
-	return nil
+	return managed.ExternalDelete{}, nil
 }
 
 func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleRunParameters, error) {

@@ -9,7 +9,7 @@ import (
 )
 
 // Define a predicate function to filter resources based on consistent hashing
-func IsResourceForShard(targetShard, totalShards int) predicate.Predicate {
+func IsResourceForShard(targetShard, totalShards uint32) predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			return isResourceForShardHelper(e.Object, targetShard, totalShards)
@@ -27,13 +27,13 @@ func IsResourceForShard(targetShard, totalShards int) predicate.Predicate {
 }
 
 // Helper function to check if the resource belongs to the current shard
-func isResourceForShardHelper(obj client.Object, targetShard, totalShards int) bool {
+func isResourceForShardHelper(obj client.Object, targetShard, totalShards uint32) bool {
 	// Calculate a hash of the resource name
 	hash := hashString(obj.GetName())
 	// Perform modulo operation to determine the shard
-	shard := hash % uint32(totalShards)
+	shard := hash % totalShards
 	// Check if the shard matches the target shard
-	return int(shard) == targetShard
+	return shard == targetShard
 }
 
 // Helper function to hash a string using FNV-1a

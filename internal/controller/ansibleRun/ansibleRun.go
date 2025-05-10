@@ -39,7 +39,6 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/statemetrics"
 	"github.com/google/uuid"
 	"github.com/spf13/afero"
-	"gopkg.in/yaml.v2"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -49,6 +48,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
@@ -109,7 +109,7 @@ type SetupOptions struct {
 	AnsibleRolesPath       string
 	Timeout                time.Duration
 	ArtifactsHistoryLimit  int
-	ReplicasCount          int
+	ReplicasCount          uint32
 	ProviderCtx            context.Context
 	ProviderCancel         context.CancelFunc
 }
@@ -539,11 +539,11 @@ func addBehaviorVars(pc *v1alpha1.ProviderConfig) map[string]string {
 	return behaviorVars
 }
 
-func (c *connector) generateLeaseName(index int) string {
+func (c *connector) generateLeaseName(index uint32) string {
 	return fmt.Sprintf(leaseNameTemplate, index)
 }
 
-func (c *connector) releaseLease(ctx context.Context, kube client.Client, index int) error {
+func (c *connector) releaseLease(ctx context.Context, kube client.Client, index uint32) error {
 	leaseName := c.generateLeaseName(index)
 	ns := "upbound-system"
 
@@ -556,7 +556,7 @@ func (c *connector) releaseLease(ctx context.Context, kube client.Client, index 
 
 // Attempts to acquire or renew a lease for the current replica ID
 // Returns an error when unable to obtain the lease
-func (c *connector) acquireLease(ctx context.Context, kube client.Client, index int) error {
+func (c *connector) acquireLease(ctx context.Context, kube client.Client, index uint32) error {
 	lease := &coordinationv1.Lease{}
 	leaseName := c.generateLeaseName(index)
 	leaseDurationSeconds := ptr.To(int32(leaseDurationSeconds))
@@ -613,19 +613,19 @@ func (c *connector) acquireLease(ctx context.Context, kube client.Client, index 
 
 // Finds an available shard and acquires a lease for it. Will attempt to obtain one indefinitely.
 // This will also start a background go-routine to renew the lease continuously and release it when the process receives a shutdown signal
-func (c *connector) acquireAndHoldShard(o controller.Options, s SetupOptions) (int, error) {
+func (c *connector) acquireAndHoldShard(o controller.Options, s SetupOptions) (uint32, error) {
 	ctx := s.ProviderCtx
-	currentShard := -1
+	var currentShard uint32
 
 	cfg := ctrl.GetConfigOrDie()
 	kube, err := client.New(cfg, client.Options{})
 	if err != nil {
-		return currentShard, err
+		return 0, err
 	}
 
 AcquireLease:
 	for {
-		for i := 0; i < s.ReplicasCount; i++ {
+		for i := uint32(0); i < s.ReplicasCount; i++ {
 			if err := c.acquireLease(ctx, kube, i); err == nil {
 				currentShard = i
 				o.Logger.Debug("acquired lease", "id", i)

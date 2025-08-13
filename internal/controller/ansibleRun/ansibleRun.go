@@ -242,6 +242,33 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 		}
 	}
 
+	// prepare git credentials for ansible-galaxy to fetch remote roles
+	// TODO(fahed) support other private remote repository
+	// NOTE(ytsarev): Retrieve .git-credentials from Spec to /tmp outside of AnsibleRun directory
+	gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
+	if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
+		return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
+	}
+	for _, cd := range pc.Spec.Credentials {
+		if cd.Filename != gitCredentialsFilename {
+			continue
+		}
+		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
+		}
+		p := filepath.Clean(filepath.Join(gitCredDir, filepath.Base(cd.Filename)))
+		if err := c.fs.WriteFile(p, data, 0600); err != nil {
+			return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
+		}
+		// NOTE(ytsarev): Make go-getter pick up .git-credentials, see /.gitconfig in the container image
+		// TODO: check wether go-getter is used in the ansible case
+		err = os.Setenv("GIT_CRED_DIR", gitCredDir)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", errRemoteConfiguration, err)
+		}
+	}
+
 	var requirementRoles []byte
 	if len(cr.Spec.ForProvider.Roles) != 0 {
 		// marshall cr.Spec.ForProvider.Roles entries into yaml document
@@ -251,32 +278,6 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 		requirementRoles, err = yaml.Marshal(&rolesMap)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", errMarshalRoles, err)
-		}
-		// prepare git credentials for ansible-galaxy to fetch remote roles
-		// TODO(fahed) support other private remote repository
-		// NOTE(ytsarev): Retrieve .git-credentials from Spec to /tmp outside of AnsibleRun directory
-		gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
-		if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
-			return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
-		}
-		for _, cd := range pc.Spec.Credentials {
-			if cd.Filename != gitCredentialsFilename {
-				continue
-			}
-			data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", errGetCreds, err)
-			}
-			p := filepath.Clean(filepath.Join(gitCredDir, filepath.Base(cd.Filename)))
-			if err := c.fs.WriteFile(p, data, 0600); err != nil {
-				return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
-			}
-			// NOTE(ytsarev): Make go-getter pick up .git-credentials, see /.gitconfig in the container image
-			// TODO: check wether go-getter is used in the ansible case
-			err = os.Setenv("GIT_CRED_DIR", gitCredDir)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", errRemoteConfiguration, err)
-			}
 		}
 	} else if cr.Spec.ForProvider.PlaybookInline != nil {
 		if err := c.fs.WriteFile(filepath.Join(dir, runnerutil.PlaybookYml), []byte(*cr.Spec.ForProvider.PlaybookInline), 0600); err != nil {

@@ -12,7 +12,8 @@ RUN python -m pip install --no-index --find-links=/wheels ansible ansible-runner
 ARG TARGETOS
 ARG TARGETARCH
 
-ADD bin/$TARGETOS\_$TARGETARCH/provider /usr/local/bin/crossplane-ansible-provider
+ADD "bin/${TARGETOS}_${TARGETARCH}/provider" /usr/local/bin/crossplane-ansible-provider
+ADD .gitconfig .gitconfig
 
 # As of Crossplane v1.3.0 provider controllers run as UID 2000.
 # https://github.com/crossplane/crossplane/blob/v1.3.0/internal/controller/pkg/revision/deployment.go#L32

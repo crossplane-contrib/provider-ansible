@@ -13,3 +13,5 @@ guidelines and responsibilities for the steering committee and maintainers.
 * Fahed Dorgaa <fahed.dorgaa@gmail.com> ([fahedouch](https://github.com/fahedouch))
 * Mo Ying (William) <morningspace@yahoo.com> ([morningspace](https://github.com/morningspace))
 * Dasha Komsa <komsa.darya@gmail.com> ([d-honeybadger](https://github.com/d-honeybadger))
+* Jean du Plessis <jean@upbound.io> ([jeanduplessis](https://github.com/jeanduplessis))
+* Sergen Yalcin <sergen@upbound.io> ([sergenyalcin](https://github.com/sergenyalcin))

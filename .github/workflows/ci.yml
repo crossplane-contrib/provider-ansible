@@ -305,13 +305,12 @@ jobs:
           username: ${{ secrets.CONTRIB_DOCKER_USR }}
           password: ${{ secrets.CONTRIB_DOCKER_PSW }}
 
-      - name: Login to Upbound
-        uses: docker/login-action@v3
-        if: env.XPKG_ACCESS_ID != ''
+      - name: Login to GHCR using PAT
+        uses: docker/login-action@v3.3.0
         with:
-          registry: xpkg.upbound.io
-          username: ${{ secrets.XPKG_ACCESS_ID }}
-          password: ${{ secrets.XPKG_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish Artifacts to S3 and Docker Hub
         run: make -j2 publish BRANCH_NAME=${GITHUB_REF##*/}

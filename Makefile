@@ -38,17 +38,15 @@ CROSSPLANE_VERSION = 1.16.0
 
 # ====================================================================================
 # Setup Images
-REGISTRY_ORGS ?= xpkg.upbound.io/upbound
+REGISTRY_ORGS ?= ghcr.io/crossplane-contrib
 IMAGES = provider-ansible
 -include build/makelib/imagelight.mk
 
 # ====================================================================================
 # Setup XPKG
 
-XPKG_REG_ORGS ?= xpkg.upbound.io/crossplane-contrib index.docker.io/crossplanecontrib
-# NOTE(hasheddan): skip promoting on xpkg.upbound.io as channel tags are
-# inferred.
-XPKG_REG_ORGS_NO_PROMOTE ?= xpkg.upbound.io/crossplane-contrib
+XPKG_REG_ORGS ?= ghcr.io/crossplane-contrib index.docker.io/crossplanecontrib
+XPKG_REG_ORGS_NO_PROMOTE ?= ghcr.io/crossplane-contrib
 XPKGS = provider-ansible
 -include build/makelib/xpkg.mk
 

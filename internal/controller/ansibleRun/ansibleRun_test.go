@@ -643,7 +643,7 @@ func TestObserve(t *testing.T) {
 						return nil
 					},
 					MockRun: func(ctx context.Context) (io.Reader, error) {
-						cmd := exec.Command("ls")
+						cmd := exec.Command("ls") //nolint:noctx
 						cmd.Start()
 						return nil, cmd.Wait()
 					},

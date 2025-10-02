@@ -117,7 +117,7 @@ func TestAnsibleRunPolicyInit(t *testing.T) {
 				t.Fatalf("Error occurred unexpectedly: %v", err)
 			}
 
-			switch {
+			switch { //nolint:staticcheck
 			case tc.policy == "ObserveAndDelete":
 				if testRunner.AnsibleRunPolicy.Name != "ObserveAndDelete" {
 					t.Fatalf("Unexpected policy %v expected %v", testRunner.AnsibleRunPolicy.Name, "ObserveAndDelete")

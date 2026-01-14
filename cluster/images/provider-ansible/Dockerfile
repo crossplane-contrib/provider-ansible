@@ -12,12 +12,14 @@ RUN python -m pip install --no-index --find-links=/wheels ansible ansible-runner
 ARG TARGETOS
 ARG TARGETARCH
 
-ADD bin/$TARGETOS\_$TARGETARCH/provider /usr/local/bin/crossplane-ansible-provider
+ADD "bin/${TARGETOS}_${TARGETARCH}/provider" /usr/local/bin/crossplane-ansible-provider
 
 # As of Crossplane v1.3.0 provider controllers run as UID 2000.
 # https://github.com/crossplane/crossplane/blob/v1.3.0/internal/controller/pkg/revision/deployment.go#L32
 RUN adduser --disabled-password --uid 2000 ansible
 RUN passwd -d ansible
+
+ADD .gitconfig /home/ansible/.gitconfig
 
 RUN mkdir /ansibleDir /.ansible
 RUN chown ansible /ansibleDir /.ansible

@@ -1,6 +1,6 @@
 module github.com/crossplane-contrib/provider-ansible
 
-go 1.24
+go 1.24.13
 
 require (
 	github.com/apenella/go-ansible v1.3.0

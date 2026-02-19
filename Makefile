@@ -14,7 +14,7 @@ PLATFORMS ?= linux_amd64 linux_arm64
 # ====================================================================================
 # Setup Go
 
-GO_REQUIRED_VERSION = 1.24
+GO_REQUIRED_VERSION = 1.24.13
 NPROCS ?= 1
 GO_TEST_PARALLEL := $(shell echo $$(( $(NPROCS) / 2 )))
 GO_STATIC_PACKAGES = $(GO_PROJECT)/cmd/provider
@@ -30,7 +30,7 @@ RUNNING_IN_CI = true
 
 # Uncomment below to override the versions from the build module
 # KIND_VERSION = v0.15.0
-UP_VERSION = v0.28.0
+UP_VERSION = v0.44.3
 # UP_CHANNEL = stable
 UPTEST_VERSION = v0.5.0
 CROSSPLANE_VERSION = 1.16.0

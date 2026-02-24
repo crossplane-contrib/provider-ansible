@@ -1,10 +1,10 @@
-FROM python:3.13.7-alpine3.22 AS build-base
-RUN apk --no-cache add gcc musl-dev libffi-dev
+FROM python:3.13-alpine3.22 AS build-base
+RUN apk --no-cache add gcc musl-dev libffi-dev && pip install --upgrade "pip==26.0"
 RUN mkdir -p /wheels
 RUN python -m pip wheel ansible ansible-runner distlib --wheel-dir=/wheels
 
-FROM python:3.13.7-alpine3.22
-RUN apk --no-cache add ca-certificates bash openssh-client git dumb-init sshpass
+FROM python:3.13-alpine3.22
+RUN apk --no-cache add ca-certificates bash openssh-client git dumb-init sshpass && pip install --upgrade "pip==26.0"
 COPY --from=build-base /wheels/* /wheels/
 RUN python -m pip install --no-index --find-links=/wheels ansible ansible-runner distlib && \
     rm -r /wheels

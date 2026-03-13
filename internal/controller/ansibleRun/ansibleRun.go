@@ -58,7 +58,14 @@ import (
 )
 
 const (
-	errNotAnsibleRun       = "managed resource is not a AnsibleRun custom resource"
+	// lastAppliedAnnotation is a provider-specific annotation used to cache
+	// the last-applied ForProvider parameters for change detection.
+	// This intentionally avoids kubectl.kubernetes.io/last-applied-configuration
+	// which expects a full Kubernetes object and conflicts with providers
+	// (like provider-kubernetes) that read it during observe/delete.
+	lastAppliedAnnotation = "ansible.crossplane.io/last-applied-parameters"
+
+	errNotAnsibleRun = "managed resource is not a AnsibleRun custom resource"
 	errTrackPCUsage        = "cannot track ProviderConfig usage"
 	errGetPC               = "cannot get ProviderConfig"
 	errGetCreds            = "cannot get credentials"
@@ -457,7 +464,7 @@ func (c *external) Delete(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed
 }
 
 func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleRunParameters, error) {
-	lastApplied, ok := observed.GetAnnotations()[v1.LastAppliedConfigAnnotation]
+	lastApplied, ok := observed.GetAnnotations()[lastAppliedAnnotation]
 	if !ok {
 		return nil, nil
 	}
@@ -490,7 +497,7 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	}
 	// set LastAppliedConfig Annotation to avoid useless cmd run
 	meta.AddAnnotations(desired, map[string]string{
-		v1.LastAppliedConfigAnnotation: string(out),
+		lastAppliedAnnotation: string(out),
 	})
 
 	if err := c.kube.Update(ctx, desired); err != nil {

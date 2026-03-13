@@ -30,7 +30,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/spf13/afero"
-	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -540,7 +539,7 @@ func TestObserve(t *testing.T) {
 	testRun := v1alpha1.AnsibleRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
-				v1.LastAppliedConfigAnnotation: fmt.Sprintf(`{"playbookInline":"%s"}`, testPlaybook),
+				lastAppliedAnnotation: fmt.Sprintf(`{"playbookInline":"%s"}`, testPlaybook),
 			},
 		},
 		Spec: v1alpha1.AnsibleRunSpec{

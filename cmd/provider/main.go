@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/pkg/feature"
@@ -53,6 +54,7 @@ func main() {
 		artifactsHistoryLimit   = app.Flag("artifacts-history-limit", "Each attempt to run the playbook/role generates a set of artifacts on disk. This settings limits how many of these to keep.").Default("10").Int()
 		pollStateMetricInterval = app.Flag("poll-state-metric", "State metric recording interval").Default("5s").Duration()
 		replicasCount           = app.Flag("replicas", "Amount of replicas configured for the provider. When using more than 1 replica, reconciles will be sharded across them based on a modular hash.").Default("1").Uint32()
+		leaseNamespace          = app.Flag("lease-namespace", "Namespace used to create Lease objects for replica sharding. Defaults to the provider pod's own namespace.").Default(podNamespace()).String()
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -107,9 +109,23 @@ func main() {
 		Timeout:                *timeout,
 		ArtifactsHistoryLimit:  *artifactsHistoryLimit,
 		ReplicasCount:          *replicasCount,
+		LeaseNamespace:         *leaseNamespace,
 		ProviderCtx:            providerCtx,
 		ProviderCancel:         cancel,
 	}
 	kingpin.FatalIfError(ansible.Setup(mgr, o, ansibleOpts), "Cannot setup Ansible controllers")
 	kingpin.FatalIfError(mgr.Start(providerCtx), "Cannot start controller manager")
+}
+
+const saNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+// podNamespace returns the namespace of the running pod by reading the
+// downward-API file injected by Kubernetes. Falls back to "crossplane-system"
+// when running outside a cluster (e.g. during local development).
+func podNamespace() string {
+	data, err := os.ReadFile(saNamespaceFile)
+	if err != nil {
+		return "crossplane-system"
+	}
+	return strings.TrimSpace(string(data))
 }

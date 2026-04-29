@@ -110,6 +110,7 @@ type SetupOptions struct {
 	Timeout                time.Duration
 	ArtifactsHistoryLimit  int
 	ReplicasCount          uint32
+	LeaseNamespace         string
 	ProviderCtx            context.Context
 	ProviderCancel         context.CancelFunc
 }
@@ -143,8 +144,9 @@ func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
 				ArtifactsHistoryLimit: s.ArtifactsHistoryLimit,
 			}
 		},
-		replicaID: uuid.New().String(),
-		logger:    o.Logger,
+		replicaID:      uuid.New().String(),
+		leaseNamespace: s.LeaseNamespace,
+		logger:         o.Logger,
 	}
 
 	opts := []managed.ReconcilerOption{
@@ -182,12 +184,13 @@ func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
 // A connector is expected to produce an ExternalClient when its Connect method
 // is called.
 type connector struct {
-	kube      client.Client
-	usage     resource.Tracker
-	fs        afero.Afero
-	ansible   func(dir string) params
-	replicaID string
-	logger    logging.Logger
+	kube           client.Client
+	usage          resource.Tracker
+	fs             afero.Afero
+	ansible        func(dir string) params
+	replicaID      string
+	leaseNamespace string
+	logger         logging.Logger
 }
 
 func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.TypedExternalClient[*v1alpha1.AnsibleRun], error) { //nolint:gocyclo
@@ -546,10 +549,9 @@ func (c *connector) generateLeaseName(index uint32) string {
 
 func (c *connector) releaseLease(ctx context.Context, kube client.Client, index uint32) error {
 	leaseName := c.generateLeaseName(index)
-	ns := "upbound-system"
 
 	lease := &coordinationv1.Lease{
-		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: leaseName},
+		ObjectMeta: metav1.ObjectMeta{Namespace: c.leaseNamespace, Name: leaseName},
 	}
 
 	return kube.Delete(ctx, lease)
@@ -562,9 +564,7 @@ func (c *connector) acquireLease(ctx context.Context, kube client.Client, index 
 	leaseName := c.generateLeaseName(index)
 	leaseDurationSeconds := ptr.To(int32(leaseDurationSeconds))
 
-	ns := "upbound-system"
-
-	if err := kube.Get(ctx, client.ObjectKey{Namespace: ns, Name: leaseName}, lease); err != nil {
+	if err := kube.Get(ctx, client.ObjectKey{Namespace: c.leaseNamespace, Name: leaseName}, lease); err != nil {
 		if !kerrors.IsNotFound(err) {
 			return err
 		}
@@ -573,7 +573,7 @@ func (c *connector) acquireLease(ctx context.Context, kube client.Client, index 
 		lease = &coordinationv1.Lease{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      leaseName,
-				Namespace: ns,
+				Namespace: c.leaseNamespace,
 			},
 			Spec: coordinationv1.LeaseSpec{
 				HolderIdentity:       &c.replicaID,
@@ -613,8 +613,13 @@ func (c *connector) acquireLease(ctx context.Context, kube client.Client, index 
 }
 
 // Finds an available shard and acquires a lease for it. Will attempt to obtain one indefinitely.
-// This will also start a background go-routine to renew the lease continuously and release it when the process receives a shutdown signal
+// This will also start a background go-routine to renew the lease continuously and release it when the process receives a shutdown signal.
+// When ReplicasCount is 1, lease acquisition is skipped and shard 0 is returned immediately.
 func (c *connector) acquireAndHoldShard(o controller.Options, s SetupOptions) (uint32, error) {
+	if s.ReplicasCount == 1 {
+		return 0, nil
+	}
+
 	ctx := s.ProviderCtx
 	var currentShard uint32
 

@@ -117,15 +117,27 @@ func main() {
 	kingpin.FatalIfError(mgr.Start(providerCtx), "Cannot start controller manager")
 }
 
-const saNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+const (
+	saNamespaceFile           = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+	defaultLeaseNamespaceFallBack = "crossplane-system"
+)
 
 // podNamespace returns the namespace of the running pod by reading the
-// downward-API file injected by Kubernetes. Falls back to "crossplane-system"
-// when running outside a cluster (e.g. during local development).
+// downward-API file injected by Kubernetes. Falls back to the default namespace
+// when running outside a cluster (e.g. during local development) or when the
+// file exists but contains no data.
 func podNamespace() string {
-	data, err := os.ReadFile(saNamespaceFile)
+	return podNamespaceFromFile(saNamespaceFile)
+}
+
+func podNamespaceFromFile(path string) string {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return "crossplane-system"
+		return defaultLeaseNamespaceFallBack
 	}
-	return strings.TrimSpace(string(data))
+	ns := strings.TrimSpace(string(data))
+	if ns == "" {
+		return defaultLeaseNamespaceFallBack
+	}
+	return ns
 }

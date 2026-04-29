@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
@@ -1005,6 +1006,40 @@ func TestDelete(t *testing.T) {
 			_, err := e.Delete(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Delete(...): -want error, +got error:\n%s\n", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestAcquireAndHoldShard(t *testing.T) {
+	cases := map[string]struct {
+		reason  string
+		conn    connector
+		opts    controller.Options
+		setup   SetupOptions
+		want    uint32
+		wantErr error
+	}{
+		"SingleReplica": {
+			reason: "When ReplicasCount is 1 no lease should be acquired and shard 0 should be returned immediately",
+			conn:   connector{},
+			opts:   controller.Options{},
+			setup: SetupOptions{
+				ReplicasCount: 1,
+			},
+			want:    0,
+			wantErr: nil,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := tc.conn.acquireAndHoldShard(tc.opts, tc.setup)
+			if diff := cmp.Diff(tc.wantErr, err, test.EquateErrors()); diff != "" {
+				t.Errorf("\n%s\nacquireAndHoldShard(...): -want error, +got error:\n%s\n", tc.reason, diff)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("\n%s\nacquireAndHoldShard(...): -want, +got:\n%s\n", tc.reason, diff)
 			}
 		})
 	}

@@ -621,7 +621,6 @@ func (c *connector) acquireAndHoldShard(o controller.Options, s SetupOptions) (u
 	}
 
 	ctx := s.ProviderCtx
-	var currentShard uint32
 
 	cfg := ctrl.GetConfigOrDie()
 	kube, err := client.New(cfg, client.Options{})
@@ -629,43 +628,46 @@ func (c *connector) acquireAndHoldShard(o controller.Options, s SetupOptions) (u
 		return 0, err
 	}
 
-AcquireLease:
 	for {
-		for i := uint32(0); i < s.ReplicasCount; i++ {
-			if err := c.acquireLease(ctx, kube, i); err == nil {
-				currentShard = i
-				o.Logger.Debug("acquired lease", "id", i)
-				go func() {
-					sigHandler := ctrl.SetupSignalHandler()
-
-					for {
-						select {
-						case <-time.After(leaseRenewalInterval):
-							if err := c.acquireLease(ctx, kube, i); err != nil {
-								o.Logger.Info("failed to renew lease", "id", i, "err", err)
-								s.ProviderCancel()
-							} else {
-								o.Logger.Debug("renewed lease", "id", i)
-							}
-						case <-sigHandler.Done():
-							o.Logger.Info("controller is shutting down, releasing lease")
-							if err := c.releaseLease(ctx, kube, i); err != nil {
-								o.Logger.Info("failed to release lease", "lease", err)
-							}
-							o.Logger.Debug("released lease")
-							s.ProviderCancel()
-							return
-						}
-					}
-				}()
-				// Lease is acquired and background goroutine started for renewal, we can safely break to return the current shard
-				break AcquireLease
-			} else {
-				o.Logger.Debug("cannot acquire lease", "id", i, "err", err)
-				time.Sleep(leaseAcquireAttemptInterval)
-			}
+		if shard, ok := c.tryAcquireShard(ctx, kube, o, s); ok {
+			return shard, nil
 		}
 	}
+}
 
-	return currentShard, nil
+func (c *connector) tryAcquireShard(ctx context.Context, kube client.Client, o controller.Options, s SetupOptions) (uint32, bool) {
+	for i := uint32(0); i < s.ReplicasCount; i++ {
+		if err := c.acquireLease(ctx, kube, i); err != nil {
+			o.Logger.Debug("cannot acquire lease", "id", i, "err", err)
+			time.Sleep(leaseAcquireAttemptInterval)
+			continue
+		}
+		o.Logger.Debug("acquired lease", "id", i)
+		go c.holdShard(ctx, kube, i, o, s)
+		return i, true
+	}
+	return 0, false
+}
+
+func (c *connector) holdShard(ctx context.Context, kube client.Client, i uint32, o controller.Options, s SetupOptions) {
+	sigHandler := ctrl.SetupSignalHandler()
+	for {
+		select {
+		case <-time.After(leaseRenewalInterval):
+			if err := c.acquireLease(ctx, kube, i); err != nil {
+				o.Logger.Info("failed to renew lease", "id", i, "err", err)
+				s.ProviderCancel()
+			} else {
+				o.Logger.Debug("renewed lease", "id", i)
+			}
+		case <-sigHandler.Done():
+			o.Logger.Info("controller is shutting down, releasing lease")
+			if err := c.releaseLease(ctx, kube, i); err != nil {
+				o.Logger.Info("failed to release lease", "lease", err)
+			}
+			o.Logger.Debug("released lease")
+			s.ProviderCancel()
+			return
+		}
+	}
 }

@@ -68,11 +68,21 @@ func TestPodNamespaceFromFile(t *testing.T) {
 			},
 			want: defaultLeaseNamespaceFallBack,
 		},
+		"PathOutsideAllowedPrefix": {
+			reason: "Should fall back to default namespace when the path is outside the allowed prefix",
+			setup: func(dir string) string {
+				return "/etc/passwd"
+			},
+			want: defaultLeaseNamespaceFallBack,
+		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
+			oldPrefix := namespacePathPrefix
+			namespacePathPrefix = dir + string(filepath.Separator)
+			defer func() { namespacePathPrefix = oldPrefix }()
 			path := tc.setup(dir)
 			got := podNamespaceFromFile(path)
 			if got != tc.want {

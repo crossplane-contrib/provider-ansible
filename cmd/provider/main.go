@@ -118,7 +118,7 @@ func main() {
 }
 
 const (
-	saNamespaceFile           = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+	saNamespaceFile               = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 	defaultLeaseNamespaceFallBack = "crossplane-system"
 )
 
@@ -130,8 +130,17 @@ func podNamespace() string {
 	return podNamespaceFromFile(saNamespaceFile)
 }
 
+var namespacePathPrefix = "/var/run/secrets/"
+
 func podNamespaceFromFile(path string) string {
-	data, err := os.ReadFile(path)
+	cleanPath := filepath.Clean(path)
+	// This prefix check is defense-in-depth against path traversal (G304/CWE-22).
+	// In production the path is always the hardcoded saNamespaceFile constant,
+	// so falling back to the default namespace is acceptable.
+	if !strings.HasPrefix(cleanPath, namespacePathPrefix) {
+		return defaultLeaseNamespaceFallBack
+	}
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return defaultLeaseNamespaceFallBack
 	}

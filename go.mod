@@ -6,7 +6,7 @@ require (
 	github.com/apenella/go-ansible v1.3.0
 	github.com/crossplane/crossplane-runtime v1.20.0
 	github.com/crossplane/crossplane-tools v0.0.0-20240516011917-bfb5045f0903
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/spf13/afero v1.15.0
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6

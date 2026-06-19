@@ -171,10 +171,6 @@ func (p Parameters) playbookCmdFunc(ctx context.Context, playbookName string, pa
 		cmdOptions := []string{
 			"-p", playbookName,
 		}
-		// enable check mode via cmdline https://github.com/ansible/ansible-runner/issues/580
-		if checkMode {
-			cmdOptions = append(cmdOptions, "--cmdline", "\\--check")
-		}
 		// gosec is disabled here because of G204. We should pay attention that user can't
 		// make command injection via command argument
 		dc := exec.CommandContext(ctx, p.RunnerBinary, append(cmdArgs, cmdOptions...)...) //nolint:gosec
@@ -200,10 +196,6 @@ func (p Parameters) roleCmdFunc(ctx context.Context, roleName string, path strin
 			"--role", roleName,
 			"--roles-path", path,
 			"--project-dir", p.WorkingDirPath,
-		}
-		// enable check mode via cmdline https://github.com/ansible/ansible-runner/issues/580
-		if checkMode {
-			cmdOptions = append(cmdOptions, "--cmdline", "\\--check")
 		}
 		// gosec is disabled here because of G204. We should pay attention that user can't
 		// make command injection via command argument
@@ -370,23 +362,35 @@ func (r *Runner) Run(ctx context.Context) (io.Reader, error) {
 		stdoutWriter, stderrWriter io.Writer
 	)
 
+	// manage env/cmdline directly based on checkMode to prevent ansible-runner stale env/cmdline pollution.
+	cmdLinePath := filepath.Join(r.ansibleEnvDir(), "cmdline")
+	if r.checkMode {
+		if err := os.MkdirAll(r.ansibleEnvDir(), 0700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(cmdLinePath, []byte("--check"), 0600); err != nil {
+			return nil, err
+		}
+		// dc.Stdout is buffered into stdoutBuf for stream result parsing purposes.
+		// ansible-runner dry-run execution stdout is written only to stdoutBuf
+		// and not os.Stdout (we cannot parse os.Stdout because the main process is writing to it)
+		stdoutWriter = io.Writer(&stdoutBuf)
+	} else {
+		if err := os.Remove(cmdLinePath); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		// for disabled checkMode dc.Stdout and dc.Stderr are respectfully
+		// written to os.Stdout and os.Stdout for debugging purpose
+		stdoutWriter = os.Stdout
+		stderrWriter = os.Stderr
+	}
+
 	dc := r.cmdFunc(r.behaviorVars, r.checkMode)
 	dc.Args = append(dc.Args, "--rotate-artifacts", strconv.Itoa(r.artifactsHistoryLimit))
 
 	id := generateUUID().String()
 	dc.Args = append(dc.Args, "--ident", id)
 
-	if !r.checkMode {
-		// for disabled checkMode dc.Stdout and dc.Stderr are respectfully
-		// written to os.Stdout and os.Stdout for debugging purpose
-		stdoutWriter = os.Stdout
-		stderrWriter = os.Stderr
-	} else {
-		// dc.Stdout is buffered into stdoutBuf for stream result parsing purposes.
-		// ansible-runner dry-run execution stdout is written only to stdoutBuf
-		// and not os.Stdout (we cannot parse os.Stdout because the main process is writing to it)
-		stdoutWriter = io.Writer(&stdoutBuf)
-	}
 	dc.Stdout = stdoutWriter
 	dc.Stderr = stderrWriter
 

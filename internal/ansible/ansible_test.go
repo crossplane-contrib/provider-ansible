@@ -237,6 +237,21 @@ func TestRun(t *testing.T) {
 			if string(out) != tc.expectedOutput {
 				t.Errorf("Unexpected output in the command buffer %q, want %q", string(out), tc.expectedOutput)
 			}
+
+			// Verify that env/cmdline is correctly written/deleted on disk
+			cmdLinePath := filepath.Join(runner.ansibleEnvDir(), "cmdline")
+			if tc.checkMode {
+				content, err := os.ReadFile(cmdLinePath)
+				if err != nil {
+					t.Errorf("Expected env/cmdline to exist, but got error: %v", err)
+				} else if string(content) != "--check" {
+					t.Errorf("Expected env/cmdline content to be %q, but got: %q", "--check", string(content))
+				}
+			} else {
+				if _, err := os.Stat(cmdLinePath); !os.IsNotExist(err) {
+					t.Errorf("Expected env/cmdline to not exist, but stat returned: %v", err)
+				}
+			}
 		})
 	}
 }

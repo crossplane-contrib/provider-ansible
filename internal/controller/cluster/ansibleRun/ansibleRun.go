@@ -44,24 +44,16 @@ import (
 	"github.com/crossplane-contrib/provider-ansible/pkg/shardutil"
 )
 
-// Setup adds a controller that reconciles AnsibleRun managed resources.
-func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) error {
-	name := managed.ControllerName(v1alpha1.AnsibleRunGroupKind)
-
-	fs := afero.Afero{Fs: afero.NewOsFs()}
-
-	galaxyBinary, err := galaxyutil.GalaxyBinary()
-	if err != nil {
-		return err
-	}
-	runnerBinary, err := runnerutil.RunnerBinary()
-	if err != nil {
-		return err
-	}
-
-	tracker := resource.NewLegacyProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{})
-
-	scope := ansiblerun.Scope[*v1alpha1.AnsibleRun]{
+// NewScope returns the per-API-group behaviour the shared AnsibleRun controller
+// core needs in order to reconcile the cluster-scoped ansible.crossplane.io
+// group. It is exported so that the legacy group's behaviour can be asserted
+// directly rather than only through Setup, which needs a manager.
+//
+// The client is accepted for symmetry with the namespaced group and with
+// Setup's own wiring; ResolveProviderConfig deliberately uses the client the
+// core hands it, which is the same one, so this parameter goes unused.
+func NewScope(_ client.Client, tracker resource.LegacyTracker) ansiblerun.Scope[*v1alpha1.AnsibleRun] {
+	return ansiblerun.Scope[*v1alpha1.AnsibleRun]{
 		Track: func(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
 			return tracker.Track(ctx, cr)
 		},
@@ -79,6 +71,26 @@ func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) er
 		// orphan it rather than block deletion on it.
 		BeforeObserve: func(cr *v1alpha1.AnsibleRun) { cr.SetDeletionPolicy(xpv2.DeletionOrphan) },
 	}
+}
+
+// Setup adds a controller that reconciles AnsibleRun managed resources.
+func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) error {
+	name := managed.ControllerName(v1alpha1.AnsibleRunGroupKind)
+
+	fs := afero.Afero{Fs: afero.NewOsFs()}
+
+	galaxyBinary, err := galaxyutil.GalaxyBinary()
+	if err != nil {
+		return err
+	}
+	runnerBinary, err := runnerutil.RunnerBinary()
+	if err != nil {
+		return err
+	}
+
+	tracker := resource.NewLegacyProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{})
+
+	scope := NewScope(mgr.GetClient(), tracker)
 
 	c := ansiblerun.NewConnector(mgr.GetClient(), fs, func(dir string) ansiblerun.Params {
 		return ansible.Parameters{

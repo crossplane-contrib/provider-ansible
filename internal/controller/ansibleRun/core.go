@@ -242,7 +242,7 @@ func (c *Connector[T]) Connect(ctx context.Context, cr T) (managed.TypedExternal
 		}
 		sel, err := ResolveSecretSelectors(cd.CommonCredentialSelectors, ns, allowExplicit)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
+			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
 		}
 		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, sel)
 		if err != nil {

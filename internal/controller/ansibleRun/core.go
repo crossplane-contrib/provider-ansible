@@ -100,12 +100,12 @@ type Scope[T Run] struct {
 	// applies to that config's own credentials.
 	ResolveProviderConfig func(ctx context.Context, kube client.Client, cr T) (ResolvedProviderConfig, error)
 
-	// SecretNamespace returns the namespace Secrets must be read from, and
+	// SecretNamespace returns the namespace Secrets are read from, and
 	// whether the managed resource's own selectors may instead name a
-	// namespace of its own choosing. It governs everything the managed
-	// resource itself declares - spec.forProvider.inventories. The provider
-	// config's own credentials additionally consult
-	// ResolvedProviderConfig.AllowExplicitSecretNamespace.
+	// namespace of their own choosing. It governs what the managed resource
+	// itself declares - spec.forProvider.inventories. A provider config's own
+	// credentials take their allowExplicit from
+	// ResolvedProviderConfig.AllowExplicitSecretNamespace instead.
 	SecretNamespace func(cr T) (ns string, allowExplicit bool)
 
 	// BeforeObserve, when set, runs at the very start of every Observe.
@@ -243,11 +243,11 @@ func (c *Connector[T]) Connect(ctx context.Context, cr T) (managed.TypedExternal
 	pcSpec := pc.Spec
 
 	// ns and allowExplicit govern what the managed resource itself declares:
-	// the inventories loop below. The provider config's own credentials are
-	// read from the same namespace, but their permission to name a different
-	// one comes from the resolved config, because a cluster-scoped
-	// ClusterProviderConfig is written by an administrator and is meant to
-	// serve every namespace.
+	// the inventories loop below. The two credential loops take their policy
+	// from the resolved provider config instead. When credsAllowExplicit is
+	// true ns is inert for them and the credential's own secretRef.namespace
+	// decides, so a cluster-scoped ClusterProviderConfig's credentials may
+	// name any namespace.
 	ns, allowExplicit := c.scope.SecretNamespace(cr)
 	credsAllowExplicit := pc.AllowExplicitSecretNamespace
 

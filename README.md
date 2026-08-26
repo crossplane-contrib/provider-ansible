@@ -14,9 +14,9 @@
     - [Run against a Kubernetes cluster](#run-against-a-kubernetes-cluster)
   - [Additional documents](#additional-documents)
   - [Namespaced resources (Crossplane v2)](#namespaced-resources-crossplane-v2)
+    - [Trust model](#trust-model)
     - [Choosing a provider config](#choosing-a-provider-config)
     - [Secrets are namespace-local](#secrets-are-namespace-local)
-    - [Trust model](#trust-model)
     - [ClusterProviderConfig and namespaced Secrets](#clusterproviderconfig-and-namespaced-secrets)
     - [Deletion runs the playbook](#deletion-runs-the-playbook)
     - [Upgrading](#upgrading)
@@ -121,29 +121,9 @@ objects stay where they are and you create namespaced ones alongside them.
 See [`examples/namespaced`](examples/namespaced) for a namespaced `AnsibleRun`,
 `ProviderConfig`, and `ClusterProviderConfig`.
 
-### Choosing a provider config
-
-`spec.providerConfigRef.kind` selects which kind of config to use, and defaults
-to `ClusterProviderConfig`:
-
-- `ClusterProviderConfig` - cluster-scoped, shared by every namespace.
-- `ProviderConfig` - namespaced, read from the `AnsibleRun`'s own namespace.
-
-### Secrets are namespace-local
-
-A namespaced `AnsibleRun` and a namespaced `ProviderConfig` may only read
-Secrets in their own namespace. `secretRef.namespace` is a required field on
-every credential and inventory selector - the API server rejects a manifest
-that leaves it out - and for these namespaced resources it must be set to the
-resource's own namespace; naming any other namespace is refused with a clear
-error rather than silently read. `ClusterProviderConfig` is cluster-scoped, so
-on its own its `secretRef.namespace` may name any namespace, but that value is
-still checked against the namespaced `AnsibleRun` that is using the credential
-- see "ClusterProviderConfig and namespaced Secrets" below.
-
 ### Trust model
 
-The namespace confinement described above prevents *accidental*
+The namespace confinement described below prevents *accidental*
 cross-namespace Secret references. It is not a security boundary, and it does
 not make a namespaced `AnsibleRun` safe to hand to an untrusted tenant.
 
@@ -165,6 +145,26 @@ should be treated as equivalent to cluster-admin-adjacent trust, and must not
 be granted to untrusted tenants. This is a pre-existing property of running
 arbitrary playbooks; the namespaced API does not introduce it, and namespacing
 `AnsibleRun` does not change it.
+
+### Choosing a provider config
+
+`spec.providerConfigRef.kind` selects which kind of config to use, and defaults
+to `ClusterProviderConfig`:
+
+- `ClusterProviderConfig` - cluster-scoped, shared by every namespace.
+- `ProviderConfig` - namespaced, read from the `AnsibleRun`'s own namespace.
+
+### Secrets are namespace-local
+
+A namespaced `AnsibleRun` and a namespaced `ProviderConfig` may only read
+Secrets in their own namespace. `secretRef.namespace` is a required field on
+every credential and inventory selector - the API server rejects a manifest
+that leaves it out - and for these namespaced resources it must be set to the
+resource's own namespace; naming any other namespace is refused with a clear
+error rather than silently read. `ClusterProviderConfig` is cluster-scoped, so
+on its own its `secretRef.namespace` may name any namespace, but that value is
+still checked against the namespaced `AnsibleRun` that is using the credential
+- see "ClusterProviderConfig and namespaced Secrets" below.
 
 ### ClusterProviderConfig and namespaced Secrets
 

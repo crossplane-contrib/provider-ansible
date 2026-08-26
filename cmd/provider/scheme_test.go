@@ -33,9 +33,11 @@ func TestBothAPIGroupsAreRegistered(t *testing.T) {
 
 	for _, gvk := range []schema.GroupVersionKind{
 		{Group: "ansible.crossplane.io", Version: "v1alpha1", Kind: "AnsibleRun"},
+		{Group: "ansible.crossplane.io", Version: "v1alpha1", Kind: "ProviderConfigUsage"},
 		{Group: "ansible.m.crossplane.io", Version: "v1alpha1", Kind: "AnsibleRun"},
 		{Group: "ansible.m.crossplane.io", Version: "v1alpha1", Kind: "ProviderConfig"},
 		{Group: "ansible.m.crossplane.io", Version: "v1alpha1", Kind: "ClusterProviderConfig"},
+		{Group: "ansible.m.crossplane.io", Version: "v1alpha1", Kind: "ProviderConfigUsage"},
 	} {
 		if !s.Recognizes(gvk) {
 			t.Errorf("AddToScheme(...): scheme does not recognise %s", gvk)

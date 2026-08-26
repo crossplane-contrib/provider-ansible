@@ -191,7 +191,7 @@ func TestConnect(t *testing.T) {
 		"TrackUsageError": {
 			reason: "We should return any error encountered while tracking ProviderConfig usage",
 			fields: fields{
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return errBoom }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return errBoom }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 			},
 			args: args{
@@ -207,7 +207,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(errBoom),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 			},
 			args: args{
@@ -239,7 +239,7 @@ func TestConnect(t *testing.T) {
 						return nil
 					}),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 			},
 			args: args{
@@ -268,7 +268,7 @@ func TestConnect(t *testing.T) {
 						return nil
 					}),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -302,7 +302,7 @@ func TestConnect(t *testing.T) {
 						return nil
 					}),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -333,7 +333,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -362,7 +362,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -391,7 +391,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -420,7 +420,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) Params {
 					return MockPs{
@@ -459,7 +459,7 @@ func TestConnect(t *testing.T) {
 						return nil
 					}),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) Params {
 					return MockPs{
@@ -493,7 +493,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) Params {
 					return MockPs{

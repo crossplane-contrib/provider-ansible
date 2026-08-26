@@ -120,13 +120,16 @@ func NewScope(tracker resource.ModernTracker) ansiblerun.Scope[*v1alpha1.Ansible
 // v1 AnsibleRun), so at reconcile time crossplane-runtime routes it to
 // managed.ManagementPoliciesResolver rather than
 // managed.LegacyManagementPoliciesResolver. Critically,
-// ManagementPoliciesResolver.ShouldDelete unconditionally returns true when
-// the management-policies feature is disabled — it has no deletionPolicy to
-// fall back on the way the legacy resolver does. Without
+// ManagementPoliciesResolver.Validate rejects any non-default
+// spec.managementPolicies outright while the management-policies feature is
+// disabled (see policies.go's errFmtManagementPolicyNonDefault), and that
+// check runs before ShouldDelete is ever consulted. Without
 // managed.WithManagementPolicies() here, the README's documented opt-out
 // (dropping "Delete" from spec.managementPolicies to skip running the
-// playbook on delete) would be silently inert: the object would still be
-// deleted as if every policy were still in effect.
+// playbook on delete) would not be silently inert — it would surface as a
+// ManagementPolicyInvalid warning event and a ReconcileError condition on
+// every reconcile, and because Validate returns before ShouldDelete is
+// reached, the finalizer would never be removed and the delete would hang.
 //
 // managed.WithManagementPolicies() only sets a flag on the particular
 // *managed.Reconciler instance it is passed to (via that Reconciler's own
@@ -180,7 +183,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) er
 		return err
 	}
 
-	opts := reconcilerOptions(c, o.Logger.WithValues("controller", name), s.Timeout, event.NewAPIRecorder(mgr.GetEventRecorderFor(name)))
+	opts := reconcilerOptions(c, o.Logger.WithValues("controller", name), s.Timeout, event.NewAPIRecorder(mgr.GetEventRecorderFor(name))) //nolint:staticcheck // SA1019: keeping the legacy events API until crossplane-runtime's event package moves to GetEventRecorder
 
 	if o.MetricOptions != nil {
 		opts = append(opts, managed.WithMetricRecorder(o.MetricOptions.MRMetrics))

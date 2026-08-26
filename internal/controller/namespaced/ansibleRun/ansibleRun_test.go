@@ -239,15 +239,18 @@ func TestNewScopeSecretNamespaceConfinesToOwnNamespace(t *testing.T) {
 // regression: this type has no deletionPolicy, so at reconcile time
 // crossplane-runtime resolves ShouldDelete via
 // managed.ManagementPoliciesResolver, not the legacy resolver. That
-// resolver's ShouldDelete returns true unconditionally when the
-// management-policies feature is disabled, with no deletionPolicy to fall
-// back on. Without managed.WithManagementPolicies() among this controller's
-// reconciler options, the README's documented `managementPolicies` opt-out
-// (dropping "Delete" to skip running the playbook on delete) would be
-// silently inert — the AnsibleRun would still run the playbook once more on
-// delete regardless of what the operator set. See the comment on
-// reconcilerOptions for the full explanation, including why the
-// cluster-scoped controller must NOT enable this feature.
+// resolver's Validate rejects any non-default spec.managementPolicies
+// outright while the management-policies feature is disabled, and Validate
+// runs before ShouldDelete is ever consulted. Without
+// managed.WithManagementPolicies() among this controller's reconciler
+// options, the README's documented `managementPolicies` opt-out (dropping
+// "Delete" to skip running the playbook on delete) would not be silently
+// inert — it would surface as a ManagementPolicyInvalid warning event and a
+// ReconcileError condition on every reconcile, and because the reconciler
+// returns before ShouldDelete is reached, the finalizer would never be
+// removed and the delete would hang. See the comment on reconcilerOptions
+// for the full explanation, including why the cluster-scoped controller must
+// NOT enable this feature.
 //
 // ReconcilerOption is just a func(*managed.Reconciler), so options can only
 // be told apart by comparing the underlying function pointer of a
@@ -268,6 +271,6 @@ func TestReconcilerOptionsEnablesManagementPolicies(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("reconcilerOptions(...): missing managed.WithManagementPolicies(); the documented managementPolicies Delete opt-out would be silently inert without it")
+		t.Error("reconcilerOptions(...): missing managed.WithManagementPolicies(); the documented managementPolicies Delete opt-out would surface as a ReconcileError and block deletion, not silently no-op, without it")
 	}
 }

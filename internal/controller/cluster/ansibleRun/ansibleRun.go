@@ -105,7 +105,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) er
 		managed.WithTypedExternalConnector(c),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
 		managed.WithTimeout(s.Timeout),
-		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
+		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))), //nolint:staticcheck // SA1019: keeping the legacy events API until crossplane-runtime's event package moves to GetEventRecorder
 	}
 
 	if o.MetricOptions != nil {

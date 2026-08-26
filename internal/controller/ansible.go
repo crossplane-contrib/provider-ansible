@@ -26,10 +26,14 @@ import (
 	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 	clusteransiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/cluster/ansibleRun"
 	clusterconfig "github.com/crossplane-contrib/provider-ansible/internal/controller/cluster/config"
+	nsansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/namespaced/ansibleRun"
+	nsconfig "github.com/crossplane-contrib/provider-ansible/internal/controller/namespaced/config"
 )
 
-// Setup creates all Template controllers with the supplied logger and adds them to
-// the supplied manager.
+// Setup creates all Ansible controllers with the supplied logger and adds
+// them to the supplied manager. Both the cluster-scoped
+// ansible.crossplane.io group and the namespaced ansible.m.crossplane.io
+// group are served.
 func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) error {
 	// Acquire this process's shard once, here, before any per-API-group Setup
 	// runs. Sharding is a property of the process: N replicas divide the
@@ -45,9 +49,23 @@ func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) er
 	}
 	s.Shard = shard
 
-	if err := clusterconfig.Setup(mgr, o); err != nil {
-		return err
+	for _, setup := range []func(ctrl.Manager, controller.Options) error{
+		clusterconfig.Setup,
+		nsconfig.Setup,
+	} {
+		if err := setup(mgr, o); err != nil {
+			return err
+		}
 	}
 
-	return clusteransiblerun.Setup(mgr, o, s)
+	for _, setup := range []func(ctrl.Manager, controller.Options, ansiblerun.SetupOptions) error{
+		clusteransiblerun.Setup,
+		nsansiblerun.Setup,
+	} {
+		if err := setup(mgr, o, s); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

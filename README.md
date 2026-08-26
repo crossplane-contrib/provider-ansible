@@ -13,6 +13,12 @@
   - [Developer guide](#developer-guide)
     - [Run against a Kubernetes cluster](#run-against-a-kubernetes-cluster)
   - [Additional documents](#additional-documents)
+  - [Namespaced resources (Crossplane v2)](#namespaced-resources-crossplane-v2)
+    - [Choosing a provider config](#choosing-a-provider-config)
+    - [Two differences from the cluster-scoped API](#two-differences-from-the-cluster-scoped-api)
+    - [Trust model](#trust-model)
+    - [ClusterProviderConfig and namespaced Secrets](#clusterproviderconfig-and-namespaced-secrets)
+    - [Upgrading](#upgrading)
   - [Licensing](#licensing)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -92,6 +98,110 @@ make dev-clean
 
 - [`GO`](https://tecadmin.net/install-go-on-debian/): install go1.19+ on debian
 - [`DOCKER`](https://docs.docker.com/engine/install/debian/): install docker on debian
+
+## Namespaced resources (Crossplane v2)
+
+The provider serves two API groups.
+
+| Group | Scope | Use it when |
+| --- | --- | --- |
+| `ansible.crossplane.io` | cluster | You are on Crossplane v1, or composing from a cluster-scoped composite resource. |
+| `ansible.m.crossplane.io` | namespaced | You are on Crossplane v2 and composing from a namespaced composite resource. |
+
+A namespaced `AnsibleRun` inherits its namespace from the composite resource
+that creates it, which is what Crossplane v2 requires: a namespaced composite
+cannot compose a cluster-scoped resource.
+
+Both groups accept the same `spec.forProvider`, so moving a manifest across is a
+matter of changing `apiVersion` and adding a namespace. There is no automatic
+migration. CRD scope is immutable, so existing cluster-scoped `AnsibleRun`
+objects stay where they are and you create namespaced ones alongside them.
+
+See [`examples/namespaced`](examples/namespaced) for a namespaced `AnsibleRun`,
+`ProviderConfig`, and `ClusterProviderConfig`.
+
+### Choosing a provider config
+
+`spec.providerConfigRef.kind` selects which kind of config to use, and defaults
+to `ClusterProviderConfig`:
+
+- `ClusterProviderConfig` - cluster-scoped, shared by every namespace.
+- `ProviderConfig` - namespaced, read from the `AnsibleRun`'s own namespace.
+
+### Two differences from the cluster-scoped API
+
+**Secrets are namespace-local.** A namespaced `AnsibleRun` and a namespaced
+`ProviderConfig` may only read Secrets in their own namespace. Omit
+`secretRef.namespace` and it is filled in for you; set it to a different
+namespace and the resource fails with a clear error rather than reading across
+the boundary. `ClusterProviderConfig` is cluster-scoped and still takes an
+explicit `secretRef.namespace`, but that namespace is still checked against
+the namespaced `AnsibleRun` that is using it - see "ClusterProviderConfig and
+namespaced Secrets" below.
+
+### Trust model
+
+The namespace confinement described above prevents *accidental*
+cross-namespace Secret references. It is not a security boundary, and it does
+not make a namespaced `AnsibleRun` safe to hand to an untrusted tenant.
+
+A namespaced `AnsibleRun`'s `playbookInline` is tenant-authored code that
+executes inside the provider pod, using whatever ServiceAccount the provider
+runs as - typically one with cluster-wide read access to Secrets and other
+resources. Anyone who can create an `AnsibleRun` in any namespace can write an
+Ansible task that calls the Kubernetes API directly (with the `kubernetes.core`
+collection, `curl` against the API server, or the mounted ServiceAccount token)
+and read Secrets anywhere in the cluster, bypassing the namespace confinement
+entirely. The same is true of `source: Filesystem` and `source: Environment`
+credentials and inventories, which read the provider pod's own filesystem and
+environment rather than anything namespace-scoped.
+
+In short: a namespaced `AnsibleRun` is as privileged as the provider pod
+itself, because it runs arbitrary Ansible there. Permission to create
+`AnsibleRun` resources - in any namespace, cluster-scoped or namespaced -
+should be treated as equivalent to cluster-admin-adjacent trust, and must not
+be granted to untrusted tenants. This is a pre-existing property of running
+arbitrary playbooks; the namespaced API does not introduce it, and namespacing
+`AnsibleRun` does not change it.
+
+### ClusterProviderConfig and namespaced Secrets
+
+A `ClusterProviderConfig` is cluster-scoped, so its `secretRef.namespace` is
+always explicit. But when a *namespaced* `AnsibleRun` uses one, the namespaced
+Secret policy above still applies to those credentials: the AnsibleRun may
+only read Secrets in its own namespace, regardless of which namespace the
+`ClusterProviderConfig`'s `secretRef` names. A `ClusterProviderConfig` whose
+credential says `secretRef.namespace: crossplane-system` will therefore fail
+to resolve for every namespaced `AnsibleRun` outside `crossplane-system`.
+
+This is deliberate and fails closed. In this provider, referencing a
+credential means having it written to a file next to a tenant-authored
+playbook. A `ClusterProviderConfig` that could hand any namespace's
+`AnsibleRun` a Secret named in some other namespace would let any tenant who
+can create an `AnsibleRun` exfiltrate that Secret - for example, an
+administrator's cloud credentials - simply by pointing at it. Confining the
+Secret to the AnsibleRun's own namespace closes that off, at the cost that a
+single `ClusterProviderConfig` cannot transparently share one Secret across
+every namespace. To serve several namespaces, either copy the Secret into
+each of them, or give each namespace its own namespaced `ProviderConfig`.
+
+**Deletion runs the playbook.** The cluster-scoped `AnsibleRun` forces
+`spec.deletionPolicy: Orphan`, so deleting it never runs the playbook. The
+namespaced spec has no `deletionPolicy` field, so deleting a namespaced
+`AnsibleRun` runs the playbook once more with `state: absent` before the object
+goes away. To keep the old behaviour, drop the `Delete` action:
+
+    spec:
+      managementPolicies: ["Observe", "Create", "Update", "LateInitialize"]
+
+### Upgrading
+
+Upgrading to Crossplane runtime v2 removed `spec.publishConnectionDetailsTo`
+from the cluster-scoped `AnsibleRun` CRD, because Crossplane removed External
+Secret Stores upstream. This provider never implemented that field, so no
+functionality is lost, but a manifest that still sets it will be rejected by
+the API server after you upgrade. Remove the field from any existing
+`AnsibleRun` manifests before or during the upgrade.
 
 ## Licensing
 

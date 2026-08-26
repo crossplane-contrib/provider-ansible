@@ -1,0 +1,19 @@
+apiVersion: ansible.m.crossplane.io/v1alpha1
+kind: AnsibleRun
+metadata:
+  namespace: team-a
+  name: example
+spec:
+  # Defaults to a ClusterProviderConfig named "default". Set kind to
+  # ProviderConfig to use one from this AnsibleRun's own namespace.
+  providerConfigRef:
+    kind: ClusterProviderConfig
+    name: default
+  forProvider:
+    playbookInline: |
+      ---
+      - hosts: localhost
+        tasks:
+          - name: ansibleplaybook-simple
+            debug:
+              msg: You are running 'ansibleplaybook-simple' example

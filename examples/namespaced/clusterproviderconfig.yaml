@@ -1,0 +1,37 @@
+# A ClusterProviderConfig is cluster-scoped and can be referenced by an
+# AnsibleRun in any namespace. Because it is cluster-scoped, its secretRef
+# must name a namespace explicitly - there is no "own namespace" to default
+# to.
+#
+# IMPORTANT: a namespaced AnsibleRun may only read Secrets in its own
+# namespace, even when the credential comes from a ClusterProviderConfig (see
+# "Trust model" and "Two differences from the cluster-scoped API" in the
+# README). That confinement is keyed off the AnsibleRun's namespace, not the
+# ClusterProviderConfig's. So this particular ClusterProviderConfig - whose
+# secretRef.namespace is "team-a" - only works for namespaced AnsibleRuns
+# that live in "team-a", such as examples/namespaced/ansibleRun-playbook-inline.yml.
+# A namespaced AnsibleRun in any other namespace will fail to resolve this
+# credential. To share one ClusterProviderConfig across many namespaces,
+# either copy the Secret into each namespace that needs it, or give each
+# namespace its own namespaced ProviderConfig instead (see providerconfig.yaml).
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: team-a
+  name: gcp-credentials
+type: Opaque
+data:
+  credentials: QkFTRTY0RU5DT0RFRF9QUk9WSURFUl9DUkVEUw==
+---
+apiVersion: ansible.m.crossplane.io/v1alpha1
+kind: ClusterProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    - filename: gcp-credentials.json
+      source: Secret
+      secretRef:
+        namespace: team-a
+        name: gcp-credentials
+        key: credentials

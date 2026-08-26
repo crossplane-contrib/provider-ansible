@@ -29,7 +29,7 @@ import (
 // it, so they are asserted against the Scope that Setup actually wires up.
 
 func TestNewScopeBeforeObserveOrphans(t *testing.T) {
-	scope := NewScope(nil, nil)
+	scope := NewScope(nil)
 
 	if scope.BeforeObserve == nil {
 		t.Fatal("NewScope(...).BeforeObserve: must not be nil; without it the legacy group would stop orphaning its external resource on delete")
@@ -44,7 +44,7 @@ func TestNewScopeBeforeObserveOrphans(t *testing.T) {
 }
 
 func TestNewScopeSecretNamespaceAllowsAnyNamespace(t *testing.T) {
-	scope := NewScope(nil, nil)
+	scope := NewScope(nil)
 
 	if scope.SecretNamespace == nil {
 		t.Fatal("NewScope(...).SecretNamespace: must not be nil")

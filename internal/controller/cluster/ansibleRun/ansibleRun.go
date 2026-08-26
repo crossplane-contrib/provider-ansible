@@ -48,11 +48,7 @@ import (
 // core needs in order to reconcile the cluster-scoped ansible.crossplane.io
 // group. It is exported so that the legacy group's behaviour can be asserted
 // directly rather than only through Setup, which needs a manager.
-//
-// The client is accepted for symmetry with the namespaced group and with
-// Setup's own wiring; ResolveProviderConfig deliberately uses the client the
-// core hands it, which is the same one, so this parameter goes unused.
-func NewScope(_ client.Client, tracker resource.LegacyTracker) ansiblerun.Scope[*v1alpha1.AnsibleRun] {
+func NewScope(tracker resource.LegacyTracker) ansiblerun.Scope[*v1alpha1.AnsibleRun] {
 	return ansiblerun.Scope[*v1alpha1.AnsibleRun]{
 		Track: func(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
 			return tracker.Track(ctx, cr)
@@ -90,7 +86,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) er
 
 	tracker := resource.NewLegacyProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{})
 
-	scope := NewScope(mgr.GetClient(), tracker)
+	scope := NewScope(tracker)
 
 	c := ansiblerun.NewConnector(mgr.GetClient(), fs, func(dir string) ansiblerun.Params {
 		return ansible.Parameters{

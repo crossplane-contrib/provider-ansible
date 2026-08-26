@@ -57,3 +57,8 @@ type AnsibleRunList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []AnsibleRun `json:"items"`
 }
+
+// GetForProvider returns the AnsibleRun's provider-specific parameters.
+func (mg *AnsibleRun) GetForProvider() *shared.AnsibleRunParameters {
+	return &mg.Spec.ForProvider
+}

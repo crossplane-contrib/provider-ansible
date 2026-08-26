@@ -21,20 +21,16 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
-
-	"github.com/crossplane-contrib/provider-ansible/internal/controller/config"
+	clusteransiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/cluster/ansibleRun"
+	clusterconfig "github.com/crossplane-contrib/provider-ansible/internal/controller/cluster/config"
 )
 
 // Setup creates all Template controllers with the supplied logger and adds them to
 // the supplied manager.
 func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) error {
-	if err := config.Setup(mgr, o); err != nil {
+	if err := clusterconfig.Setup(mgr, o); err != nil {
 		return err
 	}
 
-	if err := ansiblerun.Setup(mgr, o, s); err != nil {
-		return err
-	}
-
-	return nil
+	return clusteransiblerun.Setup(mgr, o, s)
 }

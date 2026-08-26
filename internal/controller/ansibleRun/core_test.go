@@ -41,8 +41,8 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
 	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 
+	"github.com/crossplane-contrib/provider-ansible/apis/cluster/v1alpha1"
 	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
 	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 )
@@ -126,6 +126,26 @@ func (r MockRunner) FailureReason() (string, error) {
 	return r.MockFailureReason()
 }
 
+// clusterScope mirrors the Scope the cluster-scoped Setup wires up, so that
+// these tests exercise the shared core through exactly the per-scope behaviour
+// the ansible.crossplane.io group runs with in production.
+func clusterScope(usage resource.LegacyTracker) Scope[*v1alpha1.AnsibleRun] {
+	return Scope[*v1alpha1.AnsibleRun]{
+		Track: func(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
+			return usage.Track(ctx, cr)
+		},
+		ResolveProviderConfig: func(ctx context.Context, kube client.Client, cr *v1alpha1.AnsibleRun) (*shared.ProviderConfigSpec, error) {
+			pc := &v1alpha1.ProviderConfig{}
+			if err := kube.Get(ctx, types.NamespacedName{Name: cr.GetProviderConfigReference().Name}, pc); err != nil {
+				return nil, err
+			}
+			return &pc.Spec, nil
+		},
+		SecretNamespace: func(_ *v1alpha1.AnsibleRun) (string, bool) { return "", true },
+		BeforeObserve:   func(cr *v1alpha1.AnsibleRun) { cr.SetDeletionPolicy(xpv2.DeletionOrphan) },
+	}
+}
+
 func TestConnect(t *testing.T) {
 	errBoom := errors.New("boom")
 	pbCreds := "credentials"
@@ -137,7 +157,7 @@ func TestConnect(t *testing.T) {
 		kube    client.Client
 		usage   resource.LegacyTracker
 		fs      afero.Afero
-		ansible func(dir string) params
+		ansible func(dir string) Params
 	}
 
 	type args struct {
@@ -402,7 +422,7 @@ func TestConnect(t *testing.T) {
 				},
 				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string) params {
+				ansible: func(_ string) Params {
 					return MockPs{
 						MockInit: func(_ context.Context, _ *shared.AnsibleRunParameters, _ metav1.Object, _ map[string]string) (*ansible.Runner, error) {
 							return nil, errBoom
@@ -441,7 +461,7 @@ func TestConnect(t *testing.T) {
 				},
 				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string) params {
+				ansible: func(_ string) Params {
 					return MockPs{
 						MockInit: func(_ context.Context, _ *shared.AnsibleRunParameters, _ metav1.Object, _ map[string]string) (*ansible.Runner, error) {
 							return nil, nil
@@ -475,7 +495,7 @@ func TestConnect(t *testing.T) {
 				},
 				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string) params {
+				ansible: func(_ string) Params {
 					return MockPs{
 						MockInit: func(_ context.Context, _ *shared.AnsibleRunParameters, _ metav1.Object, _ map[string]string) (*ansible.Runner, error) {
 							return nil, nil
@@ -505,12 +525,7 @@ func TestConnect(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := connector{
-				kube:    tc.fields.kube,
-				usage:   tc.fields.usage,
-				fs:      tc.fields.fs,
-				ansible: tc.fields.ansible,
-			}
+			c := NewConnector(tc.fields.kube, tc.fields.fs, tc.fields.ansible, clusterScope(tc.fields.usage), "", "", nil)
 			_, err := c.Connect(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Connect(...): -want error, +got error:\n%s\n", tc.reason, diff)
@@ -689,13 +704,18 @@ func TestObserve(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			e := external{runner: tc.fields.runner, kube: tc.fields.kube}
+			e := external[*v1alpha1.AnsibleRun]{runner: tc.fields.runner, kube: tc.fields.kube, scope: clusterScope(nil)}
 			got, err := e.Observe(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want error, +got error:\n%s\n", tc.reason, diff)
 			}
 			if diff := cmp.Diff(tc.want.o, got); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want, +got:\n%s\n", tc.reason, diff)
+			}
+			// The cluster scope orphans the external resource because we
+			// cannot observe it; Observe must apply that on every call.
+			if got := tc.args.cr.GetDeletionPolicy(); got != xpv2.DeletionOrphan {
+				t.Errorf("\n%s\ne.Observe(...): deletion policy: want %q, got %q\n", tc.reason, xpv2.DeletionOrphan, got)
 			}
 		})
 	}
@@ -841,7 +861,7 @@ func TestCreateOrUpdate(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			e := external{runner: tc.fields.runner, kube: tc.fields.kube}
+			e := external[*v1alpha1.AnsibleRun]{runner: tc.fields.runner, kube: tc.fields.kube, scope: clusterScope(nil)}
 			got, err := e.Create(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want error, +got error:\n%s\n", tc.reason, diff)
@@ -1003,7 +1023,7 @@ func TestDelete(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			e := external{runner: tc.fields.runner, kube: tc.fields.kube}
+			e := external[*v1alpha1.AnsibleRun]{runner: tc.fields.runner, kube: tc.fields.kube, scope: clusterScope(nil)}
 			_, err := e.Delete(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Delete(...): -want error, +got error:\n%s\n", tc.reason, diff)
@@ -1015,7 +1035,7 @@ func TestDelete(t *testing.T) {
 func TestAcquireAndHoldShard(t *testing.T) {
 	cases := map[string]struct {
 		reason  string
-		conn    connector
+		conn    *Connector[*v1alpha1.AnsibleRun]
 		opts    controller.Options
 		setup   SetupOptions
 		want    uint32
@@ -1023,7 +1043,7 @@ func TestAcquireAndHoldShard(t *testing.T) {
 	}{
 		"SingleReplica": {
 			reason: "When ReplicasCount is 1 no lease should be acquired and shard 0 should be returned immediately",
-			conn:   connector{},
+			conn:   &Connector[*v1alpha1.AnsibleRun]{},
 			opts:   controller.Options{},
 			setup: SetupOptions{
 				ReplicasCount: 1,
@@ -1035,12 +1055,12 @@ func TestAcquireAndHoldShard(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := tc.conn.acquireAndHoldShard(tc.opts, tc.setup)
+			got, err := tc.conn.AcquireAndHoldShard(tc.opts, tc.setup)
 			if diff := cmp.Diff(tc.wantErr, err, test.EquateErrors()); diff != "" {
-				t.Errorf("\n%s\nacquireAndHoldShard(...): -want error, +got error:\n%s\n", tc.reason, diff)
+				t.Errorf("\n%s\nAcquireAndHoldShard(...): -want error, +got error:\n%s\n", tc.reason, diff)
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("\n%s\nacquireAndHoldShard(...): -want, +got:\n%s\n", tc.reason, diff)
+				t.Errorf("\n%s\nAcquireAndHoldShard(...): -want, +got:\n%s\n", tc.reason, diff)
 			}
 		})
 	}

@@ -33,8 +33,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/crossplane-contrib/provider-ansible/apis/cluster/v1alpha1"
 	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 )
 
 const (

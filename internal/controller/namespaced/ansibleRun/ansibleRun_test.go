@@ -18,8 +18,13 @@ package ansiblerun
 
 import (
 	"context"
+	"reflect"
 	"testing"
+	"time"
 
+	"github.com/crossplane/crossplane-runtime/v2/pkg/event"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
 	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 	"github.com/google/go-cmp/cmp"
@@ -227,5 +232,42 @@ func TestNewScopeSecretNamespaceConfinesToOwnNamespace(t *testing.T) {
 	}
 	if allowExplicit {
 		t.Error("NewScope(...).SecretNamespace(cr): allowExplicit: want false, got true; a namespaced resource must never be allowed a foreign secretRef namespace")
+	}
+}
+
+// TestReconcilerOptionsEnablesManagementPolicies guards against a specific
+// regression: this type has no deletionPolicy, so at reconcile time
+// crossplane-runtime resolves ShouldDelete via
+// managed.ManagementPoliciesResolver, not the legacy resolver. That
+// resolver's ShouldDelete returns true unconditionally when the
+// management-policies feature is disabled, with no deletionPolicy to fall
+// back on. Without managed.WithManagementPolicies() among this controller's
+// reconciler options, the README's documented `managementPolicies` opt-out
+// (dropping "Delete" to skip running the playbook on delete) would be
+// silently inert — the AnsibleRun would still run the playbook once more on
+// delete regardless of what the operator set. See the comment on
+// reconcilerOptions for the full explanation, including why the
+// cluster-scoped controller must NOT enable this feature.
+//
+// ReconcilerOption is just a func(*managed.Reconciler), so options can only
+// be told apart by comparing the underlying function pointer of a
+// freshly-obtained managed.WithManagementPolicies() value against each
+// option actually returned. managed.WithManagementPolicies takes no
+// arguments and closes over nothing, so the function value it returns has a
+// stable code pointer across calls, making this comparison reliable.
+func TestReconcilerOptionsEnablesManagementPolicies(t *testing.T) {
+	opts := reconcilerOptions(nil, logging.NewNopLogger(), time.Minute, event.NewNopRecorder())
+
+	want := reflect.ValueOf(managed.WithManagementPolicies()).Pointer()
+
+	found := false
+	for _, o := range opts {
+		if reflect.ValueOf(o).Pointer() == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("reconcilerOptions(...): missing managed.WithManagementPolicies(); the documented managementPolicies Delete opt-out would be silently inert without it")
 	}
 }

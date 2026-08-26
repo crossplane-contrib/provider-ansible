@@ -1,12 +1,12 @@
 # A ClusterProviderConfig is cluster-scoped and can be referenced by an
 # AnsibleRun in any namespace. Because it is cluster-scoped, its secretRef
-# must name a namespace explicitly - there is no "own namespace" to default
-# to.
+# must name a namespace explicitly (namespace is a required field) - there
+# is no "own namespace" to default to.
 #
 # IMPORTANT: a namespaced AnsibleRun may only read Secrets in its own
-# namespace, even when the credential comes from a ClusterProviderConfig (see
-# "Trust model" and "Two differences from the cluster-scoped API" in the
-# README). That confinement is keyed off the AnsibleRun's namespace, not the
+# namespace, even when the credential comes from a ClusterProviderConfig
+# (see "ClusterProviderConfig and namespaced Secrets" in the README). That
+# confinement is keyed off the AnsibleRun's namespace, not the
 # ClusterProviderConfig's. So this particular ClusterProviderConfig - whose
 # secretRef.namespace is "team-a" - only works for namespaced AnsibleRuns
 # that live in "team-a", such as examples/namespaced/ansibleRun-playbook-inline.yml.
@@ -14,6 +14,11 @@
 # credential. To share one ClusterProviderConfig across many namespaces,
 # either copy the Secret into each namespace that needs it, or give each
 # namespace its own namespaced ProviderConfig instead (see providerconfig.yaml).
+#
+# The Secret below is identical to the one in providerconfig.yaml. It is
+# repeated here, rather than referenced, so that this file can be applied on
+# its own as a standalone example; the two are not meant to be applied
+# together.
 apiVersion: v1
 kind: Secret
 metadata:

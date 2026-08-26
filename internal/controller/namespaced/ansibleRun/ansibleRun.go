@@ -22,9 +22,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/event"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
@@ -106,6 +108,44 @@ func NewScope(tracker resource.ModernTracker) ansiblerun.Scope[*v1alpha1.Ansible
 	}
 }
 
+// reconcilerOptions returns the managed.Reconciler options used to
+// reconcile namespaced AnsibleRun resources, before Setup appends any
+// metrics options that need a live ctrl.Manager. It is a separate,
+// dependency-light function so that Setup's option set — in particular,
+// that this controller enables the beta management policies feature — can
+// be asserted directly by a test rather than only through Setup, which
+// needs a manager.
+//
+// This type has no deletionPolicy field (unlike the legacy cluster-scoped
+// v1 AnsibleRun), so at reconcile time crossplane-runtime routes it to
+// managed.ManagementPoliciesResolver rather than
+// managed.LegacyManagementPoliciesResolver. Critically,
+// ManagementPoliciesResolver.ShouldDelete unconditionally returns true when
+// the management-policies feature is disabled — it has no deletionPolicy to
+// fall back on the way the legacy resolver does. Without
+// managed.WithManagementPolicies() here, the README's documented opt-out
+// (dropping "Delete" from spec.managementPolicies to skip running the
+// playbook on delete) would be silently inert: the object would still be
+// deleted as if every policy were still in effect.
+//
+// managed.WithManagementPolicies() only sets a flag on the particular
+// *managed.Reconciler instance it is passed to (via that Reconciler's own
+// feature.Flags), not a package- or process-wide flag, so enabling it here
+// does not affect the legacy cluster-scoped controller's reconciler. That
+// controller must keep the feature disabled: it relies on
+// LegacyManagementPoliciesResolver deciding ShouldDelete from
+// spec.deletionPolicy != Orphan, which is only reached when the feature is
+// disabled.
+func reconcilerOptions(c managed.TypedExternalConnector[*v1alpha1.AnsibleRun], log logging.Logger, timeout time.Duration, rec event.Recorder) []managed.ReconcilerOption {
+	return []managed.ReconcilerOption{
+		managed.WithTypedExternalConnector(c),
+		managed.WithLogger(log),
+		managed.WithTimeout(timeout),
+		managed.WithRecorder(rec),
+		managed.WithManagementPolicies(),
+	}
+}
+
 // Setup adds a controller that reconciles namespaced AnsibleRun managed
 // resources.
 func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) error {
@@ -140,12 +180,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) er
 		return err
 	}
 
-	opts := []managed.ReconcilerOption{
-		managed.WithTypedExternalConnector(c),
-		managed.WithLogger(o.Logger.WithValues("controller", name)),
-		managed.WithTimeout(s.Timeout),
-		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
-	}
+	opts := reconcilerOptions(c, o.Logger.WithValues("controller", name), s.Timeout, event.NewAPIRecorder(mgr.GetEventRecorderFor(name)))
 
 	if o.MetricOptions != nil {
 		opts = append(opts, managed.WithMetricRecorder(o.MetricOptions.MRMetrics))

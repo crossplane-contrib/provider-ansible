@@ -1,5 +1,16 @@
 # A namespaced ProviderConfig is only usable by AnsibleRuns in its own
 # namespace, and may only reference Secrets in that namespace.
+#
+# secretRef.namespace is a required field in the CRD schema - it cannot be
+# omitted - and for a namespaced ProviderConfig it must equal this object's
+# own namespace ("team-a" here); any other value is refused when the
+# ProviderConfig is resolved. See "Secrets are namespace-local" in the
+# README.
+#
+# The Secret below is identical to the one in clusterproviderconfig.yaml. It
+# is repeated here, rather than referenced, so that this file can be applied
+# on its own as a standalone example; the two are not meant to be applied
+# together.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -19,6 +30,7 @@ spec:
     - filename: gcp-credentials.json
       source: Secret
       secretRef:
+        namespace: team-a
         name: gcp-credentials
         key: credentials
   requirements: |

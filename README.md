@@ -15,9 +15,10 @@
   - [Additional documents](#additional-documents)
   - [Namespaced resources (Crossplane v2)](#namespaced-resources-crossplane-v2)
     - [Choosing a provider config](#choosing-a-provider-config)
-    - [Two differences from the cluster-scoped API](#two-differences-from-the-cluster-scoped-api)
+    - [Secrets are namespace-local](#secrets-are-namespace-local)
     - [Trust model](#trust-model)
     - [ClusterProviderConfig and namespaced Secrets](#clusterproviderconfig-and-namespaced-secrets)
+    - [Deletion runs the playbook](#deletion-runs-the-playbook)
     - [Upgrading](#upgrading)
   - [Licensing](#licensing)
 
@@ -128,16 +129,17 @@ to `ClusterProviderConfig`:
 - `ClusterProviderConfig` - cluster-scoped, shared by every namespace.
 - `ProviderConfig` - namespaced, read from the `AnsibleRun`'s own namespace.
 
-### Two differences from the cluster-scoped API
+### Secrets are namespace-local
 
-**Secrets are namespace-local.** A namespaced `AnsibleRun` and a namespaced
-`ProviderConfig` may only read Secrets in their own namespace. Omit
-`secretRef.namespace` and it is filled in for you; set it to a different
-namespace and the resource fails with a clear error rather than reading across
-the boundary. `ClusterProviderConfig` is cluster-scoped and still takes an
-explicit `secretRef.namespace`, but that namespace is still checked against
-the namespaced `AnsibleRun` that is using it - see "ClusterProviderConfig and
-namespaced Secrets" below.
+A namespaced `AnsibleRun` and a namespaced `ProviderConfig` may only read
+Secrets in their own namespace. `secretRef.namespace` is a required field on
+every credential and inventory selector - the API server rejects a manifest
+that leaves it out - and for these namespaced resources it must be set to the
+resource's own namespace; naming any other namespace is refused with a clear
+error rather than silently read. `ClusterProviderConfig` is cluster-scoped, so
+on its own its `secretRef.namespace` may name any namespace, but that value is
+still checked against the namespaced `AnsibleRun` that is using the credential
+- see "ClusterProviderConfig and namespaced Secrets" below.
 
 ### Trust model
 
@@ -174,22 +176,28 @@ only read Secrets in its own namespace, regardless of which namespace the
 credential says `secretRef.namespace: crossplane-system` will therefore fail
 to resolve for every namespaced `AnsibleRun` outside `crossplane-system`.
 
-This is deliberate and fails closed. In this provider, referencing a
-credential means having it written to a file next to a tenant-authored
-playbook. A `ClusterProviderConfig` that could hand any namespace's
-`AnsibleRun` a Secret named in some other namespace would let any tenant who
-can create an `AnsibleRun` exfiltrate that Secret - for example, an
-administrator's cloud credentials - simply by pointing at it. Confining the
-Secret to the AnsibleRun's own namespace closes that off, at the cost that a
+This is deliberate and fails closed, and it is consistent with - not an
+exception to - the trust model above: it is defence-in-depth against
+*accidental* cross-namespace references, not a barrier against a tenant who
+is already acting adversarially. As "Trust model" describes, such a tenant
+can already read Secrets anywhere in the cluster through the playbook itself,
+regardless of which `ProviderConfig` or `ClusterProviderConfig` it declares.
+What this rule does prevent is a `ClusterProviderConfig` quietly handing a
+Secret from one namespace to an `AnsibleRun` in a different namespace that
+nobody intended to grant that access to - the same "own namespace only"
+policy as "Secrets are namespace-local" above, applied consistently even
+though `ClusterProviderConfig` itself is cluster-scoped. The cost is that a
 single `ClusterProviderConfig` cannot transparently share one Secret across
 every namespace. To serve several namespaces, either copy the Secret into
 each of them, or give each namespace its own namespaced `ProviderConfig`.
 
-**Deletion runs the playbook.** The cluster-scoped `AnsibleRun` forces
-`spec.deletionPolicy: Orphan`, so deleting it never runs the playbook. The
-namespaced spec has no `deletionPolicy` field, so deleting a namespaced
-`AnsibleRun` runs the playbook once more with `state: absent` before the object
-goes away. To keep the old behaviour, drop the `Delete` action:
+### Deletion runs the playbook
+
+The cluster-scoped `AnsibleRun` forces `spec.deletionPolicy: Orphan`, so
+deleting it never runs the playbook. The namespaced spec has no
+`deletionPolicy` field, so deleting a namespaced `AnsibleRun` runs the
+playbook once more with `state: absent` before the object goes away. To keep
+the old behaviour, drop the `Delete` action:
 
     spec:
       managementPolicies: ["Observe", "Create", "Update", "LateInitialize"]

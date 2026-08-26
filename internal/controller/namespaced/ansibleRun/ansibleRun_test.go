@@ -28,6 +28,7 @@ import (
 
 	v1alpha1 "github.com/crossplane-contrib/provider-ansible/apis/namespaced/v1alpha1"
 	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
+	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 )
 
 func run(ns, name, pcKind, pcName string) *v1alpha1.AnsibleRun {
@@ -136,6 +137,56 @@ func TestSecretNamespaceConfinesToOwnNamespace(t *testing.T) {
 	}
 	if allowExplicit {
 		t.Error("secretNamespace(...): a namespaced resource must never be allowed a foreign secretRef namespace")
+	}
+}
+
+// TestSecretNamespacePolicyComposesWithResolveSecretSelectors feeds
+// secretNamespace's two return values straight into the core's
+// ResolveSecretSelectors, exactly as the shared reconcile loop does at
+// internal/controller/ansibleRun/core.go. Testing each half in isolation
+// (secretNamespace above, ResolveSecretSelectors in the core's own
+// TestResolveSecretSelectors) does not pin the composition: this test is
+// what actually stops a namespaced AnsibleRun from ever reading a Secret
+// outside its own namespace.
+func TestSecretNamespacePolicyComposesWithResolveSecretSelectors(t *testing.T) {
+	cr := run("team-a", "r", v1alpha1.ClusterProviderConfigKind, "cpc")
+	ns, allowExplicit := secretNamespace(cr)
+
+	cases := map[string]struct {
+		sel     xpv2.CommonCredentialSelectors
+		want    xpv2.CommonCredentialSelectors
+		wantErr bool
+	}{
+		"EmptyNamespaceIsFilledInWithTheResourceNamespace": {
+			sel:  xpv2.CommonCredentialSelectors{SecretRef: &xpv2.SecretKeySelector{SecretReference: xpv2.SecretReference{Name: "creds"}, Key: "k"}},
+			want: xpv2.CommonCredentialSelectors{SecretRef: &xpv2.SecretKeySelector{SecretReference: xpv2.SecretReference{Namespace: "team-a", Name: "creds"}, Key: "k"}},
+		},
+		"MatchingNamespaceIsAcceptedUnchanged": {
+			sel:  xpv2.CommonCredentialSelectors{SecretRef: &xpv2.SecretKeySelector{SecretReference: xpv2.SecretReference{Namespace: "team-a", Name: "creds"}, Key: "k"}},
+			want: xpv2.CommonCredentialSelectors{SecretRef: &xpv2.SecretKeySelector{SecretReference: xpv2.SecretReference{Namespace: "team-a", Name: "creds"}, Key: "k"}},
+		},
+		"ForeignNamespaceIsRejectedNotRewritten": {
+			sel:     xpv2.CommonCredentialSelectors{SecretRef: &xpv2.SecretKeySelector{SecretReference: xpv2.SecretReference{Namespace: "team-b", Name: "creds"}, Key: "k"}},
+			wantErr: true,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := ansiblerun.ResolveSecretSelectors(tc.sel, ns, allowExplicit)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ResolveSecretSelectors(secretNamespace(cr)): expected an error, got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveSecretSelectors(secretNamespace(cr)): unexpected error: %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("ResolveSecretSelectors(secretNamespace(cr)): -want, +got:\n%s", diff)
+			}
+		})
 	}
 }
 

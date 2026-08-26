@@ -20,6 +20,7 @@ package ansiblerun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
@@ -42,7 +43,6 @@ import (
 )
 
 const (
-	errGetPC        = "cannot get ProviderConfig"
 	errNoPCRef      = "spec.providerConfigRef is not set"
 	errUnknownPCRef = "unknown provider config kind"
 )
@@ -50,27 +50,32 @@ const (
 // resolveProviderConfig returns the spec of the provider config an AnsibleRun
 // refers to. A namespaced ProviderConfig is read from the AnsibleRun's own
 // namespace; a ClusterProviderConfig is read cluster-scoped.
+//
+// The shared core (internal/controller/ansibleRun/core.go) wraps whatever
+// error this returns with "cannot get ProviderConfig: %w", so the messages
+// here deliberately do not add that prefix themselves — doing so would
+// duplicate it in the message an operator sees.
 func resolveProviderConfig(ctx context.Context, kube client.Client, cr *v1alpha1.AnsibleRun) (*shared.ProviderConfigSpec, error) {
 	ref := cr.GetProviderConfigReference()
 	if ref == nil {
-		return nil, fmt.Errorf("%s: %s", errGetPC, errNoPCRef)
+		return nil, errors.New(errNoPCRef)
 	}
 
 	switch ref.Kind {
 	case v1alpha1.ProviderConfigKind:
 		pc := &v1alpha1.ProviderConfig{}
 		if err := kube.Get(ctx, client.ObjectKey{Namespace: cr.GetNamespace(), Name: ref.Name}, pc); err != nil {
-			return nil, fmt.Errorf("%s: %w", errGetPC, err)
+			return nil, err
 		}
 		return &pc.Spec, nil
 	case v1alpha1.ClusterProviderConfigKind:
 		cpc := &v1alpha1.ClusterProviderConfig{}
 		if err := kube.Get(ctx, client.ObjectKey{Name: ref.Name}, cpc); err != nil {
-			return nil, fmt.Errorf("%s: %w", errGetPC, err)
+			return nil, err
 		}
 		return &cpc.Spec, nil
 	default:
-		return nil, fmt.Errorf("%s: %s %q", errGetPC, errUnknownPCRef, ref.Kind)
+		return nil, fmt.Errorf("%s %q", errUnknownPCRef, ref.Kind)
 	}
 }
 

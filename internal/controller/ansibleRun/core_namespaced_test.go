@@ -78,7 +78,9 @@ func (c *secretRecorder) Get(_ context.Context, key client.ObjectKey, obj client
 	case *nsv1alpha1.ClusterProviderConfig:
 		*o = *c.cpc
 	case *v1.Secret:
-		c.read = append(c.read, types.NamespacedName{Namespace: key.Namespace, Name: key.Name})
+		// client.ObjectKey is an alias for types.NamespacedName, so key is
+		// appended directly.
+		c.read = append(c.read, key)
 		o.Data = map[string][]byte{"credentials": []byte("secret-material")}
 	}
 	return nil

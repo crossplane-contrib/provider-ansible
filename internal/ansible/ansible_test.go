@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 )
 
@@ -98,12 +99,12 @@ func TestAnsibleRunPolicyInit(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.policy, func(t *testing.T) {
 			objectMeta.Annotations = map[string]string{AnnotationKeyPolicyRun: tc.policy}
-			myRole := v1alpha1.Role{Name: "MyRole"}
+			myRole := shared.Role{Name: "MyRole"}
 			cr := v1alpha1.AnsibleRun{
 				ObjectMeta: objectMeta,
 				Spec: v1alpha1.AnsibleRunSpec{
-					ForProvider: v1alpha1.AnsibleRunParameters{
-						Roles: []v1alpha1.Role{myRole},
+					ForProvider: shared.AnsibleRunParameters{
+						Roles: []shared.Role{myRole},
 					},
 				},
 			}
@@ -143,7 +144,7 @@ func TestInit(t *testing.T) {
 			},
 		},
 		Spec: v1alpha1.AnsibleRunSpec{
-			ForProvider: v1alpha1.AnsibleRunParameters{
+			ForProvider: shared.AnsibleRunParameters{
 				PlaybookInline: &fakePlaybook,
 			},
 		},

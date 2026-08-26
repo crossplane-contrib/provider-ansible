@@ -19,73 +19,20 @@ package v1alpha1
 import (
 	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 )
-
-// Role is definition of Ansible content role
-type Role struct {
-	Name string `json:"name"`
-	Src  string `json:"src"`
-	// +optional
-	Version string `json:"version,omitempty"`
-}
-
-// AnsibleRunParameters are the configurable fields of a AnsibleRun.
-type AnsibleRunParameters struct {
-	// The inline inventory of this AnsibleRun; the content of inventory file may be written inline.
-	// +optional
-	InventoryInline *string `json:"inventoryInline"`
-
-	// The Inventories of this AnsibleRun.
-	// +optional
-	Inventories []Inventory `json:"inventories"`
-
-	// This sets the Inventory to executable for use by ansible.builtin.script plugin
-	// +kubebuilder:default=false
-	// +optional
-	ExecutableInventory bool `json:"executableInventory"`
-
-	// The inline configuration of this AnsibleRun;  the content of a simple playbook.yml file may be written inline.
-	// This field is mutually exclusive with the “roles” field.
-	// +optional
-	PlaybookInline *string `json:"playbookInline"`
-
-	// The remote configuration of this AnsibleRun; the content can be retrieved from Ansible Galaxy as community contents
-	// This field is mutually exclusive with the “Playbooks” and/or "PlaybookInline" fields.
-	// +optional
-	Roles []Role `json:"roles"`
-
-	// Configuration variables.
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +optional
-	Vars runtime.RawExtension `json:"vars,omitempty"`
-}
-
-// Inventory required to configure ansible inventory.
-type Inventory struct {
-	// Source of the inventory.
-	// +kubebuilder:validation:Enum=None;Secret;InjectedIdentity;Environment;Filesystem
-	Source xpv2.CredentialsSource `json:"source"`
-
-	xpv2.CommonCredentialSelectors `json:",inline"`
-}
-
-// AnsibleRunObservation are the observable fields of a AnsibleRun.
-type AnsibleRunObservation struct {
-	// TODO(negz): Should we include outputs here? Or only in connection
-	// details.
-}
 
 // A AnsibleRunSpec defines the desired state of a AnsibleRun.
 type AnsibleRunSpec struct {
 	xpv2.ClusterManagedResourceSpec `json:",inline"`
-	ForProvider                     AnsibleRunParameters `json:"forProvider"`
+	ForProvider                     shared.AnsibleRunParameters `json:"forProvider"`
 }
 
 // A AnsibleRunStatus represents the observed state of a AnsibleRun.
 type AnsibleRunStatus struct {
 	xpv2.ManagedResourceStatus `json:",inline"`
-	AtProvider                 AnsibleRunObservation `json:"atProvider,omitempty"`
+	AtProvider                 shared.AnsibleRunObservation `json:"atProvider,omitempty"`
 }
 
 // +kubebuilder:object:root=true

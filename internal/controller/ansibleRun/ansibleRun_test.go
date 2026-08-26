@@ -41,6 +41,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
 	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
 	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
@@ -130,7 +131,7 @@ func TestConnect(t *testing.T) {
 	pbCreds := "credentials"
 	requirements := "fakeRequirements"
 	inlineYaml := "IamYaml"
-	myRole := v1alpha1.Role{Name: "MyRole"}
+	myRole := shared.Role{Name: "MyRole"}
 
 	type fields struct {
 		kube    client.Client
@@ -211,7 +212,7 @@ func TestConnect(t *testing.T) {
 							// here. We cause an error to be returned by asking
 							// for credentials from the environment, but not
 							// specifying an environment variable.
-							pc.Spec.Credentials = []v1alpha1.ProviderCredentials{{
+							pc.Spec.Credentials = []shared.ProviderCredentials{{
 								Source: xpv2.CredentialsSourceEnvironment,
 							}}
 						}
@@ -239,7 +240,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
 						if pc, ok := obj.(*v1alpha1.ProviderConfig); ok {
-							pc.Spec.Credentials = []v1alpha1.ProviderCredentials{{
+							pc.Spec.Credentials = []shared.ProviderCredentials{{
 								Filename: pbCreds,
 								Source:   xpv2.CredentialsSourceNone,
 							}}
@@ -273,7 +274,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
 						if pc, ok := obj.(*v1alpha1.ProviderConfig); ok {
-							pc.Spec.Credentials = []v1alpha1.ProviderCredentials{{
+							pc.Spec.Credentials = []shared.ProviderCredentials{{
 								Filename: ".git-credentials",
 								Source:   xpv2.CredentialsSourceNone,
 							}}
@@ -296,8 +297,8 @@ func TestConnect(t *testing.T) {
 						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
 							ProviderConfigReference: &xpv2.Reference{},
 						},
-						ForProvider: v1alpha1.AnsibleRunParameters{
-							Roles: []v1alpha1.Role{
+						ForProvider: shared.AnsibleRunParameters{
+							Roles: []shared.Role{
 								myRole,
 							},
 						},
@@ -327,7 +328,7 @@ func TestConnect(t *testing.T) {
 						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
 							ProviderConfigReference: &xpv2.Reference{},
 						},
-						ForProvider: v1alpha1.AnsibleRunParameters{
+						ForProvider: shared.AnsibleRunParameters{
 							PlaybookInline: &inlineYaml,
 						},
 					},
@@ -356,7 +357,7 @@ func TestConnect(t *testing.T) {
 						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
 							ProviderConfigReference: &xpv2.Reference{},
 						},
-						ForProvider: v1alpha1.AnsibleRunParameters{
+						ForProvider: shared.AnsibleRunParameters{
 							InventoryInline: &inlineYaml,
 						},
 					},
@@ -385,7 +386,7 @@ func TestConnect(t *testing.T) {
 						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
 							ProviderConfigReference: &xpv2.Reference{},
 						},
-						ForProvider: v1alpha1.AnsibleRunParameters{
+						ForProvider: shared.AnsibleRunParameters{
 							InventoryInline: &inlineYaml,
 						},
 					},
@@ -545,7 +546,7 @@ func TestObserve(t *testing.T) {
 			},
 		},
 		Spec: v1alpha1.AnsibleRunSpec{
-			ForProvider: v1alpha1.AnsibleRunParameters{
+			ForProvider: shared.AnsibleRunParameters{
 				PlaybookInline: &testPlaybook,
 			},
 		},

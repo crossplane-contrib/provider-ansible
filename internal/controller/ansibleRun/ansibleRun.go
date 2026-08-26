@@ -50,6 +50,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
 	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
@@ -275,7 +276,7 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 	var requirementRoles []byte
 	if len(cr.Spec.ForProvider.Roles) != 0 {
 		// marshall cr.Spec.ForProvider.Roles entries into yaml document
-		rolesMap := make(map[string][]v1alpha1.Role)
+		rolesMap := make(map[string][]shared.Role)
 		rolesMap["roles"] = cr.Spec.ForProvider.Roles
 		var err error
 		requirementRoles, err = yaml.Marshal(&rolesMap)
@@ -384,7 +385,7 @@ func (c *external) Observe(ctx context.Context, cr *v1alpha1.AnsibleRun) (manage
 			}
 			return managed.ExternalObservation{}, fmt.Errorf("%s: %w", errGetAnsibleRun, err)
 		}
-		var lastParameters *v1alpha1.AnsibleRunParameters
+		var lastParameters *shared.AnsibleRunParameters
 		var err error
 		lastParameters, err = getLastAppliedParameters(observed)
 		if err != nil {
@@ -459,12 +460,12 @@ func (c *external) Delete(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed
 	return managed.ExternalDelete{}, nil
 }
 
-func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleRunParameters, error) {
+func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*shared.AnsibleRunParameters, error) {
 	lastApplied, ok := observed.GetAnnotations()[v1.LastAppliedConfigAnnotation]
 	if !ok {
 		return nil, nil
 	}
-	lastParameters := &v1alpha1.AnsibleRunParameters{}
+	lastParameters := &shared.AnsibleRunParameters{}
 	if err := json.Unmarshal([]byte(lastApplied), lastParameters); err != nil {
 		return nil, fmt.Errorf("%s: %w", errUnmarshalTemplate, err)
 	}
@@ -472,7 +473,7 @@ func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleR
 	return lastParameters, nil
 }
 
-func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alpha1.AnsibleRunParameters, desired *v1alpha1.AnsibleRun) (managed.ExternalObservation, error) {
+func (c *external) handleLastApplied(ctx context.Context, lastParameters *shared.AnsibleRunParameters, desired *v1alpha1.AnsibleRun) (managed.ExternalObservation, error) {
 	// Mark as up-to-date if last is equal to desired
 	isUpToDate := (lastParameters != nil && equality.Semantic.DeepEqual(*lastParameters, desired.Spec.ForProvider))
 

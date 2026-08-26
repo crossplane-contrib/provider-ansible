@@ -20,44 +20,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
+
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 )
-
-// A Var represents key/value variable.
-type Var struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-// A ProviderConfigSpec defines the desired state of a ProviderConfig.
-type ProviderConfigSpec struct {
-	// Credentials are required to authenticate to private remote(s).
-	// +optional
-	Credentials []ProviderCredentials `json:"credentials"`
-
-	// Requirements manage the necessary dependencies to run ansible collection.
-	// It is expressed as inline yaml.
-	// TODO support fetching Roles
-	// +optional
-	Requirements *string `json:"requirements,omitempty"`
-
-	// Vars are used to customize the provider default behavior.
-	// +optional
-	Vars []Var `json:"vars,omitempty"`
-}
-
-// ProviderCredentials required to authenticate.
-type ProviderCredentials struct {
-
-	// Filename to which these provider credentials
-	// should be written.
-	Filename string `json:"filename"`
-
-	// Source of the provider credentials.
-	// +kubebuilder:validation:Enum=None;Secret;InjectedIdentity;Environment;Filesystem
-	Source xpv2.CredentialsSource `json:"source"`
-
-	xpv2.CommonCredentialSelectors `json:",inline"`
-}
 
 // A ProviderConfigStatus reflects the observed state of a ProviderConfig.
 type ProviderConfigStatus struct {
@@ -75,8 +40,8 @@ type ProviderConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ProviderConfigSpec   `json:"spec"`
-	Status ProviderConfigStatus `json:"status,omitempty"`
+	Spec   shared.ProviderConfigSpec `json:"spec"`
+	Status ProviderConfigStatus      `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

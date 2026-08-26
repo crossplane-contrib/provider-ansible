@@ -29,7 +29,6 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/statemetrics"
 	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
-	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -88,7 +87,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) er
 
 	scope := NewScope(tracker)
 
-	c := ansiblerun.NewConnector(mgr.GetClient(), fs, func(dir string) ansiblerun.Params {
+	c, err := ansiblerun.NewConnector(mgr.GetClient(), fs, func(dir string) ansiblerun.Params {
 		return ansible.Parameters{
 			WorkingDirPath:        dir,
 			GalaxyBinary:          galaxyBinary,
@@ -97,7 +96,10 @@ func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) er
 			RolesPath:             s.AnsibleRolesPath,
 			ArtifactsHistoryLimit: s.ArtifactsHistoryLimit,
 		}
-	}, scope, uuid.New().String(), s.LeaseNamespace, o.Logger)
+	}, scope)
+	if err != nil {
+		return err
+	}
 
 	opts := []managed.ReconcilerOption{
 		managed.WithTypedExternalConnector(c),
@@ -118,15 +120,12 @@ func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) er
 
 	r := managed.NewReconciler(mgr, resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind), opts...)
 
-	currentShard, err := c.AcquireAndHoldShard(o, s)
-	if err != nil {
-		return fmt.Errorf("cannot acquire and hold shard: %w", err)
-	}
-
+	// s.Shard was acquired once for this whole process before any per-API-group
+	// Setup ran; this controller only filters on it.
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(name).
 		WithOptions(o.ForControllerRuntime()).
 		For(&v1alpha1.AnsibleRun{}).
-		WithEventFilter(shardutil.IsResourceForShard(currentShard, s.ReplicasCount)).
+		WithEventFilter(shardutil.IsResourceForShard(s.Shard, s.ReplicasCount)).
 		Complete(ratelimiter.NewReconciler(name, r, o.GlobalRateLimiter))
 }

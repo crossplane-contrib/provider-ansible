@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
-	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
@@ -65,6 +64,7 @@ const (
 	errMkdir               = "cannot make directory"
 	errInit                = "cannot initialize Ansible client"
 	errForeignSecret       = "a namespaced resource may only reference Secrets in its own namespace"
+	errIncompleteScope     = "cannot build an AnsibleRun connector: these required Scope fields are nil"
 	gitCredentialsFilename = ".git-credentials"
 
 	errGetAnsibleRun     = "cannot get AnsibleRun"
@@ -123,6 +123,12 @@ type SetupOptions struct {
 	LeaseNamespace         string
 	ProviderCtx            context.Context
 	ProviderCancel         context.CancelFunc
+
+	// Shard is the index of the shard this provider process owns, as returned
+	// by ShardLeaser.AcquireAndHoldShard. It is acquired once per process,
+	// before any per-API-group Setup runs, and every group's controller
+	// filters on it.
+	Shard uint32
 }
 
 // ResolveSecretSelectors applies a scope's secret-namespace policy to a
@@ -146,27 +152,40 @@ func ResolveSecretSelectors(sel xpv2.CommonCredentialSelectors, ns string, allow
 // A Connector is expected to produce an ExternalClient when its Connect method
 // is called.
 type Connector[T Run] struct {
-	kube           client.Client
-	fs             afero.Afero
-	ansible        func(dir string) Params
-	scope          Scope[T]
-	replicaID      string
-	leaseNamespace string
-	logger         logging.Logger
+	kube    client.Client
+	fs      afero.Afero
+	ansible func(dir string) Params
+	scope   Scope[T]
 }
 
 // NewConnector returns a Connector that drives Ansible for the API group
 // described by the supplied Scope.
-func NewConnector[T Run](kube client.Client, fs afero.Afero, ansible func(dir string) Params, scope Scope[T], replicaID, leaseNamespace string, logger logging.Logger) *Connector[T] {
-	return &Connector[T]{
-		kube:           kube,
-		fs:             fs,
-		ansible:        ansible,
-		scope:          scope,
-		replicaID:      replicaID,
-		leaseNamespace: leaseNamespace,
-		logger:         logger,
+//
+// Every Scope field except BeforeObserve is required. They are validated here
+// so that a mis-wired API group fails when its controller is set up, rather
+// than panicking deep in the reconcile loop the first time a resource of that
+// group is observed.
+func NewConnector[T Run](kube client.Client, fs afero.Afero, ansible func(dir string) Params, scope Scope[T]) (*Connector[T], error) {
+	var missing []string
+	if scope.Track == nil {
+		missing = append(missing, "Track")
 	}
+	if scope.ResolveProviderConfig == nil {
+		missing = append(missing, "ResolveProviderConfig")
+	}
+	if scope.SecretNamespace == nil {
+		missing = append(missing, "SecretNamespace")
+	}
+	if len(missing) != 0 {
+		return nil, fmt.Errorf("%s: %s", errIncompleteScope, strings.Join(missing, ", "))
+	}
+
+	return &Connector[T]{
+		kube:    kube,
+		fs:      fs,
+		ansible: ansible,
+		scope:   scope,
+	}, nil
 }
 
 // Connect produces an ExternalClient for the supplied managed resource.

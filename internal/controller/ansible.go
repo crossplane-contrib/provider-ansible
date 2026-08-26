@@ -17,7 +17,10 @@ limitations under the License.
 package controller
 
 import (
+	"fmt"
+
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
+	"github.com/google/uuid"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
@@ -28,6 +31,20 @@ import (
 // Setup creates all Template controllers with the supplied logger and adds them to
 // the supplied manager.
 func Setup(mgr ctrl.Manager, o controller.Options, s ansiblerun.SetupOptions) error {
+	// Acquire this process's shard once, here, before any per-API-group Setup
+	// runs. Sharding is a property of the process: N replicas divide the
+	// managed resources into N shards, and every controller this process runs
+	// filters on the one shard it owns. Acquiring per API group instead would
+	// put one holder per group into contention for the same N shards, so with
+	// more than one group and more than one replica some process would spin in
+	// tryAcquireShard forever and never reach mgr.Start.
+	leaser := ansiblerun.NewShardLeaser(uuid.New().String(), s.LeaseNamespace, o.Logger)
+	shard, err := leaser.AcquireAndHoldShard(o, s)
+	if err != nil {
+		return fmt.Errorf("cannot acquire and hold shard: %w", err)
+	}
+	s.Shard = shard
+
 	if err := clusterconfig.Setup(mgr, o); err != nil {
 		return err
 	}

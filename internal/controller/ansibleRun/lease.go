@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,11 +38,34 @@ const (
 	leaseAcquireAttemptInterval = 5 * time.Second
 )
 
-func (c *Connector[T]) generateLeaseName(index uint32) string {
+// A ShardLeaser acquires and holds the Lease that entitles this provider
+// process to reconcile one shard of the managed resources.
+//
+// Sharding is a property of the process, not of an API group: one process
+// acquires exactly one shard however many groups it serves, and every one of
+// its controllers then filters on that same shard index. Leasing is therefore
+// deliberately not part of Connector, which exists once per API group.
+type ShardLeaser struct {
+	replicaID      string
+	leaseNamespace string
+	logger         logging.Logger
+}
+
+// NewShardLeaser returns a ShardLeaser identifying itself as replicaID and
+// writing its Leases to leaseNamespace.
+func NewShardLeaser(replicaID, leaseNamespace string, logger logging.Logger) *ShardLeaser {
+	return &ShardLeaser{
+		replicaID:      replicaID,
+		leaseNamespace: leaseNamespace,
+		logger:         logger,
+	}
+}
+
+func (c *ShardLeaser) generateLeaseName(index uint32) string {
 	return fmt.Sprintf(leaseNameTemplate, index)
 }
 
-func (c *Connector[T]) releaseLease(ctx context.Context, kube client.Client, index uint32) error {
+func (c *ShardLeaser) releaseLease(ctx context.Context, kube client.Client, index uint32) error {
 	leaseName := c.generateLeaseName(index)
 
 	lease := &coordinationv1.Lease{
@@ -53,7 +77,7 @@ func (c *Connector[T]) releaseLease(ctx context.Context, kube client.Client, ind
 
 // Attempts to acquire or renew a lease for the current replica ID
 // Returns an error when unable to obtain the lease
-func (c *Connector[T]) acquireLease(ctx context.Context, kube client.Client, index uint32) error {
+func (c *ShardLeaser) acquireLease(ctx context.Context, kube client.Client, index uint32) error {
 	lease := &coordinationv1.Lease{}
 	leaseName := c.generateLeaseName(index)
 	leaseDurationSeconds := ptr.To(int32(leaseDurationSeconds))
@@ -109,7 +133,7 @@ func (c *Connector[T]) acquireLease(ctx context.Context, kube client.Client, ind
 // AcquireAndHoldShard finds an available shard and acquires a lease for it. Will attempt to obtain one indefinitely.
 // This will also start a background go-routine to renew the lease continuously and release it when the process receives a shutdown signal.
 // When ReplicasCount is 1, lease acquisition is skipped and shard 0 is returned immediately.
-func (c *Connector[T]) AcquireAndHoldShard(o controller.Options, s SetupOptions) (uint32, error) {
+func (c *ShardLeaser) AcquireAndHoldShard(o controller.Options, s SetupOptions) (uint32, error) {
 	if s.ReplicasCount == 1 {
 		return 0, nil
 	}
@@ -129,7 +153,7 @@ func (c *Connector[T]) AcquireAndHoldShard(o controller.Options, s SetupOptions)
 	}
 }
 
-func (c *Connector[T]) tryAcquireShard(ctx context.Context, kube client.Client, o controller.Options, s SetupOptions) (uint32, bool) {
+func (c *ShardLeaser) tryAcquireShard(ctx context.Context, kube client.Client, o controller.Options, s SetupOptions) (uint32, bool) {
 	for i := uint32(0); i < s.ReplicasCount; i++ {
 		if err := c.acquireLease(ctx, kube, i); err != nil {
 			o.Logger.Debug("cannot acquire lease", "id", i, "err", err)
@@ -143,7 +167,7 @@ func (c *Connector[T]) tryAcquireShard(ctx context.Context, kube client.Client, 
 	return 0, false
 }
 
-func (c *Connector[T]) holdShard(ctx context.Context, kube client.Client, i uint32, o controller.Options, s SetupOptions) {
+func (c *ShardLeaser) holdShard(ctx context.Context, kube client.Client, i uint32, o controller.Options, s SetupOptions) {
 	sigHandler := ctrl.SetupSignalHandler()
 	for {
 		select {

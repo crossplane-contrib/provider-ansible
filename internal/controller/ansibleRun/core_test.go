@@ -525,8 +525,11 @@ func TestConnect(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := NewConnector(tc.fields.kube, tc.fields.fs, tc.fields.ansible, clusterScope(tc.fields.usage), "", "", nil)
-			_, err := c.Connect(tc.args.ctx, tc.args.cr)
+			c, err := NewConnector(tc.fields.kube, tc.fields.fs, tc.fields.ansible, clusterScope(tc.fields.usage))
+			if err != nil {
+				t.Fatalf("\n%s\nNewConnector(...): unexpected error: %v\n", tc.reason, err)
+			}
+			_, err = c.Connect(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Connect(...): -want error, +got error:\n%s\n", tc.reason, diff)
 			}
@@ -1035,7 +1038,7 @@ func TestDelete(t *testing.T) {
 func TestAcquireAndHoldShard(t *testing.T) {
 	cases := map[string]struct {
 		reason  string
-		conn    *Connector[*v1alpha1.AnsibleRun]
+		leaser  *ShardLeaser
 		opts    controller.Options
 		setup   SetupOptions
 		want    uint32
@@ -1043,7 +1046,7 @@ func TestAcquireAndHoldShard(t *testing.T) {
 	}{
 		"SingleReplica": {
 			reason: "When ReplicasCount is 1 no lease should be acquired and shard 0 should be returned immediately",
-			conn:   &Connector[*v1alpha1.AnsibleRun]{},
+			leaser: NewShardLeaser("", "", nil),
 			opts:   controller.Options{},
 			setup: SetupOptions{
 				ReplicasCount: 1,
@@ -1055,7 +1058,7 @@ func TestAcquireAndHoldShard(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := tc.conn.AcquireAndHoldShard(tc.opts, tc.setup)
+			got, err := tc.leaser.AcquireAndHoldShard(tc.opts, tc.setup)
 			if diff := cmp.Diff(tc.wantErr, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\nAcquireAndHoldShard(...): -want error, +got error:\n%s\n", tc.reason, diff)
 			}

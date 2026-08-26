@@ -25,8 +25,27 @@ import (
 )
 
 // The legacy ansible.crossplane.io group must keep its runtime behaviour
-// exactly. These two Scope fields are the ones whose loss would silently change
-// it, so they are asserted against the Scope that Setup actually wires up.
+// exactly, so all four fields of the Scope that Setup actually wires up are
+// asserted here. BeforeObserve and SecretNamespace get value assertions because
+// they are the two whose loss would silently change legacy behaviour rather
+// than fail loudly.
+
+func TestNewScopeIsComplete(t *testing.T) {
+	scope := NewScope(nil)
+
+	if scope.Track == nil {
+		t.Error("NewScope(...).Track: must not be nil")
+	}
+	if scope.ResolveProviderConfig == nil {
+		t.Error("NewScope(...).ResolveProviderConfig: must not be nil")
+	}
+	if scope.SecretNamespace == nil {
+		t.Error("NewScope(...).SecretNamespace: must not be nil")
+	}
+	if scope.BeforeObserve == nil {
+		t.Error("NewScope(...).BeforeObserve: must not be nil")
+	}
+}
 
 func TestNewScopeBeforeObserveOrphans(t *testing.T) {
 	scope := NewScope(nil)

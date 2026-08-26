@@ -17,10 +17,16 @@ limitations under the License.
 package ansiblerun
 
 import (
+	"context"
 	"testing"
 
 	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 	"github.com/google/go-cmp/cmp"
+	"github.com/spf13/afero"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/crossplane-contrib/provider-ansible/apis/cluster/v1alpha1"
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 )
 
 func TestResolveSecretSelectors(t *testing.T) {
@@ -77,6 +83,67 @@ func TestResolveSecretSelectors(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("ResolveSecretSelectors(...): -want, +got:\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestNewConnectorRejectsIncompleteScope(t *testing.T) {
+	complete := Scope[*v1alpha1.AnsibleRun]{
+		Track: func(_ context.Context, _ *v1alpha1.AnsibleRun) error { return nil },
+		ResolveProviderConfig: func(_ context.Context, _ client.Client, _ *v1alpha1.AnsibleRun) (*shared.ProviderConfigSpec, error) {
+			return nil, nil
+		},
+		SecretNamespace: func(_ *v1alpha1.AnsibleRun) (string, bool) { return "", true },
+		BeforeObserve:   func(_ *v1alpha1.AnsibleRun) {},
+	}
+
+	cases := map[string]struct {
+		scope   Scope[*v1alpha1.AnsibleRun]
+		wantErr bool
+	}{
+		"Complete": {
+			scope: complete,
+		},
+		"CompleteWithoutBeforeObserve": {
+			// BeforeObserve is the one optional field: the core nil-guards it.
+			scope: func() Scope[*v1alpha1.AnsibleRun] { s := complete; s.BeforeObserve = nil; return s }(),
+		},
+		"MissingTrack": {
+			scope:   func() Scope[*v1alpha1.AnsibleRun] { s := complete; s.Track = nil; return s }(),
+			wantErr: true,
+		},
+		"MissingResolveProviderConfig": {
+			scope:   func() Scope[*v1alpha1.AnsibleRun] { s := complete; s.ResolveProviderConfig = nil; return s }(),
+			wantErr: true,
+		},
+		"MissingSecretNamespace": {
+			scope:   func() Scope[*v1alpha1.AnsibleRun] { s := complete; s.SecretNamespace = nil; return s }(),
+			wantErr: true,
+		},
+		"MissingEverything": {
+			scope:   Scope[*v1alpha1.AnsibleRun]{},
+			wantErr: true,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c, err := NewConnector(nil, afero.Afero{Fs: afero.NewMemMapFs()}, nil, tc.scope)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("NewConnector(...): expected an error naming the missing Scope fields, got none")
+				}
+				if c != nil {
+					t.Error("NewConnector(...): expected a nil Connector alongside the error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewConnector(...): unexpected error: %v", err)
+			}
+			if c == nil {
+				t.Error("NewConnector(...): expected a Connector, got nil")
 			}
 		})
 	}

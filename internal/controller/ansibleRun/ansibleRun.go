@@ -28,15 +28,15 @@ import (
 	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
-	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
-	"github.com/crossplane/crossplane-runtime/pkg/controller"
-	"github.com/crossplane/crossplane-runtime/pkg/event"
-	"github.com/crossplane/crossplane-runtime/pkg/logging"
-	"github.com/crossplane/crossplane-runtime/pkg/meta"
-	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
-	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
-	"github.com/crossplane/crossplane-runtime/pkg/resource"
-	"github.com/crossplane/crossplane-runtime/pkg/statemetrics"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/event"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/meta"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/ratelimiter"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/statemetrics"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -132,7 +132,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
 
 	c := &connector{
 		kube:  mgr.GetClient(),
-		usage: resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
+		usage: resource.NewLegacyProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
 		fs:    fs,
 		ansible: func(dir string) params {
 			return ansible.Parameters{
@@ -185,7 +185,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
 // is called.
 type connector struct {
 	kube           client.Client
-	usage          resource.Tracker
+	usage          resource.LegacyTracker
 	fs             afero.Afero
 	ansible        func(dir string) params
 	replicaID      string
@@ -364,7 +364,7 @@ func (c *external) Observe(ctx context.Context, cr *v1alpha1.AnsibleRun) (manage
 	/* set Deletion Policy to Orphan as we cannot observe the external resource.
 	   So we won't wait for external resource deletion before attempting
 	   to delete the managed resource */
-	cr.SetDeletionPolicy(xpv1.DeletionOrphan)
+	cr.SetDeletionPolicy(xpv2.DeletionOrphan)
 
 	switch c.runner.GetAnsibleRunPolicy().Name {
 	case "ObserveAndDelete", "":
@@ -443,7 +443,7 @@ func (c *external) Update(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed
 }
 
 func (c *external) Delete(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.ExternalDelete, error) {
-	cr.Status.SetConditions(xpv1.Deleting())
+	cr.Status.SetConditions(xpv2.Deleting())
 
 	stateVar := make(map[string]string)
 	stateVar["state"] = "absent"
@@ -476,10 +476,10 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	// Mark as up-to-date if last is equal to desired
 	isUpToDate := (lastParameters != nil && equality.Semantic.DeepEqual(*lastParameters, desired.Spec.ForProvider))
 
-	isLastSyncOK := (desired.GetCondition(xpv1.TypeSynced).Status == v1.ConditionTrue)
+	isLastSyncOK := (desired.GetCondition(xpv2.TypeSynced).Status == v1.ConditionTrue)
 
 	if isUpToDate && isLastSyncOK {
-		desired.SetConditions(xpv1.Available())
+		desired.SetConditions(xpv2.Available())
 		if err := c.kube.Status().Update(ctx, desired); err != nil {
 			return managed.ExternalObservation{}, fmt.Errorf("updating status: %w", err)
 		}
@@ -521,11 +521,11 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 func (c *external) runAnsible(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
 	_, err := c.runner.Run(ctx)
 	if err != nil {
-		cond := xpv1.Unavailable()
+		cond := xpv2.Unavailable()
 		cond.Message = err.Error()
 		cr.SetConditions(cond)
 	} else {
-		cr.SetConditions(xpv1.Available())
+		cr.SetConditions(xpv2.Available())
 	}
 
 	if err := c.kube.Status().Update(ctx, cr); err != nil {

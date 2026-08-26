@@ -17,7 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -65,9 +65,9 @@ type AnsibleRunParameters struct {
 type Inventory struct {
 	// Source of the inventory.
 	// +kubebuilder:validation:Enum=None;Secret;InjectedIdentity;Environment;Filesystem
-	Source xpv1.CredentialsSource `json:"source"`
+	Source xpv2.CredentialsSource `json:"source"`
 
-	xpv1.CommonCredentialSelectors `json:",inline"`
+	xpv2.CommonCredentialSelectors `json:",inline"`
 }
 
 // AnsibleRunObservation are the observable fields of a AnsibleRun.
@@ -78,14 +78,14 @@ type AnsibleRunObservation struct {
 
 // A AnsibleRunSpec defines the desired state of a AnsibleRun.
 type AnsibleRunSpec struct {
-	xpv1.ResourceSpec `json:",inline"`
-	ForProvider       AnsibleRunParameters `json:"forProvider"`
+	xpv2.ClusterManagedResourceSpec `json:",inline"`
+	ForProvider                     AnsibleRunParameters `json:"forProvider"`
 }
 
 // A AnsibleRunStatus represents the observed state of a AnsibleRun.
 type AnsibleRunStatus struct {
-	xpv1.ResourceStatus `json:",inline"`
-	AtProvider          AnsibleRunObservation `json:"atProvider,omitempty"`
+	xpv2.ManagedResourceStatus `json:",inline"`
+	AtProvider                 AnsibleRunObservation `json:"atProvider,omitempty"`
 }
 
 // +kubebuilder:object:root=true

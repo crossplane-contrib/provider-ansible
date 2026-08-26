@@ -17,64 +17,54 @@ limitations under the License.
 
 package v1alpha1
 
-import xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+import xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 
 // GetCondition of this AnsibleRun.
-func (mg *AnsibleRun) GetCondition(ct xpv1.ConditionType) xpv1.Condition {
+func (mg *AnsibleRun) GetCondition(ct xpv2.ConditionType) xpv2.Condition {
 	return mg.Status.GetCondition(ct)
 }
 
 // GetDeletionPolicy of this AnsibleRun.
-func (mg *AnsibleRun) GetDeletionPolicy() xpv1.DeletionPolicy {
+func (mg *AnsibleRun) GetDeletionPolicy() xpv2.DeletionPolicy {
 	return mg.Spec.DeletionPolicy
 }
 
 // GetManagementPolicies of this AnsibleRun.
-func (mg *AnsibleRun) GetManagementPolicies() xpv1.ManagementPolicies {
+func (mg *AnsibleRun) GetManagementPolicies() xpv2.ManagementPolicies {
 	return mg.Spec.ManagementPolicies
 }
 
 // GetProviderConfigReference of this AnsibleRun.
-func (mg *AnsibleRun) GetProviderConfigReference() *xpv1.Reference {
+func (mg *AnsibleRun) GetProviderConfigReference() *xpv2.Reference {
 	return mg.Spec.ProviderConfigReference
 }
 
-// GetPublishConnectionDetailsTo of this AnsibleRun.
-func (mg *AnsibleRun) GetPublishConnectionDetailsTo() *xpv1.PublishConnectionDetailsTo {
-	return mg.Spec.PublishConnectionDetailsTo
-}
-
 // GetWriteConnectionSecretToReference of this AnsibleRun.
-func (mg *AnsibleRun) GetWriteConnectionSecretToReference() *xpv1.SecretReference {
+func (mg *AnsibleRun) GetWriteConnectionSecretToReference() *xpv2.SecretReference {
 	return mg.Spec.WriteConnectionSecretToReference
 }
 
 // SetConditions of this AnsibleRun.
-func (mg *AnsibleRun) SetConditions(c ...xpv1.Condition) {
+func (mg *AnsibleRun) SetConditions(c ...xpv2.Condition) {
 	mg.Status.SetConditions(c...)
 }
 
 // SetDeletionPolicy of this AnsibleRun.
-func (mg *AnsibleRun) SetDeletionPolicy(r xpv1.DeletionPolicy) {
+func (mg *AnsibleRun) SetDeletionPolicy(r xpv2.DeletionPolicy) {
 	mg.Spec.DeletionPolicy = r
 }
 
 // SetManagementPolicies of this AnsibleRun.
-func (mg *AnsibleRun) SetManagementPolicies(r xpv1.ManagementPolicies) {
+func (mg *AnsibleRun) SetManagementPolicies(r xpv2.ManagementPolicies) {
 	mg.Spec.ManagementPolicies = r
 }
 
 // SetProviderConfigReference of this AnsibleRun.
-func (mg *AnsibleRun) SetProviderConfigReference(r *xpv1.Reference) {
+func (mg *AnsibleRun) SetProviderConfigReference(r *xpv2.Reference) {
 	mg.Spec.ProviderConfigReference = r
 }
 
-// SetPublishConnectionDetailsTo of this AnsibleRun.
-func (mg *AnsibleRun) SetPublishConnectionDetailsTo(r *xpv1.PublishConnectionDetailsTo) {
-	mg.Spec.PublishConnectionDetailsTo = r
-}
-
 // SetWriteConnectionSecretToReference of this AnsibleRun.
-func (mg *AnsibleRun) SetWriteConnectionSecretToReference(r *xpv1.SecretReference) {
+func (mg *AnsibleRun) SetWriteConnectionSecretToReference(r *xpv2.SecretReference) {
 	mg.Spec.WriteConnectionSecretToReference = r
 }

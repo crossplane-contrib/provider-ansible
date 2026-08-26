@@ -93,7 +93,7 @@ const (
 )
 
 type params interface {
-	Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error)
+	Init(ctx context.Context, params *shared.AnsibleRunParameters, o metav1.Object, behaviorVars map[string]string) (*ansible.Runner, error)
 	GalaxyInstall(ctx context.Context, behaviorVars map[string]string, requirementsType string) error
 }
 
@@ -340,7 +340,7 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 
 	}
 
-	r, err := ps.Init(ctx, cr, behaviorVars)
+	r, err := ps.Init(ctx, &cr.Spec.ForProvider, cr, behaviorVars)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", errInit, err)
 

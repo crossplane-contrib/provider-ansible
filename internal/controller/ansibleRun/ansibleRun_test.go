@@ -81,13 +81,13 @@ func (e *ErrFs) Chmod(name string, mode os.FileMode) error {
 }
 
 type MockPs struct {
-	MockInit          func(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error)
+	MockInit          func(ctx context.Context, params *shared.AnsibleRunParameters, o metav1.Object, behaviorVars map[string]string) (*ansible.Runner, error)
 	MockGalaxyInstall func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error
 	MockAddFile       func(path string, content []byte) error
 }
 
-func (ps MockPs) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
-	return ps.MockInit(ctx, cr, behaviorVars)
+func (ps MockPs) Init(ctx context.Context, params *shared.AnsibleRunParameters, o metav1.Object, behaviorVars map[string]string) (*ansible.Runner, error) {
+	return ps.MockInit(ctx, params, o, behaviorVars)
 }
 
 func (ps MockPs) GalaxyInstall(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
@@ -404,7 +404,7 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(_ context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
+						MockInit: func(_ context.Context, _ *shared.AnsibleRunParameters, _ metav1.Object, _ map[string]string) (*ansible.Runner, error) {
 							return nil, errBoom
 						},
 						MockGalaxyInstall: func(_ context.Context, _ map[string]string, requirementsType string) error {
@@ -443,7 +443,7 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(_ context.Context, _ *v1alpha1.AnsibleRun, _ map[string]string) (*ansible.Runner, error) {
+						MockInit: func(_ context.Context, _ *shared.AnsibleRunParameters, _ metav1.Object, _ map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
 						MockGalaxyInstall: func(_ context.Context, _ map[string]string, _ string) error {
@@ -477,7 +477,7 @@ func TestConnect(t *testing.T) {
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 				ansible: func(_ string) params {
 					return MockPs{
-						MockInit: func(_ context.Context, _ *v1alpha1.AnsibleRun, _ map[string]string) (*ansible.Runner, error) {
+						MockInit: func(_ context.Context, _ *shared.AnsibleRunParameters, _ metav1.Object, _ map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
 						MockGalaxyInstall: func(_ context.Context, _ map[string]string, _ string) error {

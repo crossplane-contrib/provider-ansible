@@ -113,7 +113,7 @@ func TestAnsibleRunPolicyInit(t *testing.T) {
 				WorkingDirPath: ansibleCtx,
 			}
 
-			testRunner, err := ps.Init(ctx, &cr, nil)
+			testRunner, err := ps.Init(ctx, &cr.Spec.ForProvider, &cr, nil)
 			if err != nil {
 				t.Fatalf("Error occurred unexpectedly: %v", err)
 			}
@@ -164,7 +164,7 @@ func TestInit(t *testing.T) {
 		artifactsHistoryLimit: 3,
 	}
 
-	runner, err := params.Init(context.Background(), run, nil)
+	runner, err := params.Init(context.Background(), &run.Spec.ForProvider, run, nil)
 	if err != nil {
 		t.Fatalf("Unexpected Init() error: %v", err)
 	}
@@ -187,6 +187,25 @@ func TestInit(t *testing.T) {
 	cmd := runner.cmdFunc(nil, false)
 	if cmd.String() != expectedCmd.String() {
 		t.Errorf("Unexpected Runner.cmdFunc output %q expected %q", expectedCmd.String(), cmd.String())
+	}
+}
+
+func TestInitAcceptsSharedParameters(t *testing.T) {
+	dir := t.TempDir()
+	inline := "---\n- hosts: localhost\n"
+
+	p := Parameters{WorkingDirPath: dir}
+	obj := &metav1.ObjectMeta{Name: "test", Annotations: map[string]string{}}
+
+	r, err := p.Init(context.Background(), &shared.AnsibleRunParameters{PlaybookInline: &inline}, obj, map[string]string{})
+	if err != nil {
+		t.Fatalf("Init(...): unexpected error: %v", err)
+	}
+	if r == nil {
+		t.Fatal("Init(...): expected a runner, got nil")
+	}
+	if diff := cmp.Diff(dir, r.Path); diff != "" {
+		t.Errorf("Init(...): -want path, +got path:\n%s", diff)
 	}
 }
 

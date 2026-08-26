@@ -35,13 +35,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
-	"github.com/crossplane/crossplane-runtime/pkg/controller"
-	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
-	"github.com/crossplane/crossplane-runtime/pkg/resource"
-	"github.com/crossplane/crossplane-runtime/pkg/test"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane-contrib/provider-ansible/apis/cluster/v1alpha1"
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
 	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 )
@@ -80,13 +81,13 @@ func (e *ErrFs) Chmod(name string, mode os.FileMode) error {
 }
 
 type MockPs struct {
-	MockInit          func(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error)
+	MockInit          func(ctx context.Context, params *shared.AnsibleRunParameters, o metav1.Object, behaviorVars map[string]string) (*ansible.Runner, error)
 	MockGalaxyInstall func(ctx context.Context, behaviorVars map[string]string, requirementsType string) error
 	MockAddFile       func(path string, content []byte) error
 }
 
-func (ps MockPs) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
-	return ps.MockInit(ctx, cr, behaviorVars)
+func (ps MockPs) Init(ctx context.Context, params *shared.AnsibleRunParameters, o metav1.Object, behaviorVars map[string]string) (*ansible.Runner, error) {
+	return ps.MockInit(ctx, params, o, behaviorVars)
 }
 
 func (ps MockPs) GalaxyInstall(ctx context.Context, behaviorVars map[string]string, requirementsType string) error {
@@ -125,18 +126,38 @@ func (r MockRunner) FailureReason() (string, error) {
 	return r.MockFailureReason()
 }
 
+// clusterScope mirrors the Scope the cluster-scoped Setup wires up, so that
+// these tests exercise the shared core through exactly the per-scope behaviour
+// the ansible.crossplane.io group runs with in production.
+func clusterScope(usage resource.LegacyTracker) Scope[*v1alpha1.AnsibleRun] {
+	return Scope[*v1alpha1.AnsibleRun]{
+		Track: func(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
+			return usage.Track(ctx, cr)
+		},
+		ResolveProviderConfig: func(ctx context.Context, kube client.Client, cr *v1alpha1.AnsibleRun) (ResolvedProviderConfig, error) {
+			pc := &v1alpha1.ProviderConfig{}
+			if err := kube.Get(ctx, types.NamespacedName{Name: cr.GetProviderConfigReference().Name}, pc); err != nil {
+				return ResolvedProviderConfig{}, err
+			}
+			return ResolvedProviderConfig{Spec: &pc.Spec, AllowExplicitSecretNamespace: true}, nil
+		},
+		SecretNamespace: func(_ *v1alpha1.AnsibleRun) (string, bool) { return "", true },
+		BeforeObserve:   func(cr *v1alpha1.AnsibleRun) { cr.SetDeletionPolicy(xpv2.DeletionOrphan) },
+	}
+}
+
 func TestConnect(t *testing.T) {
 	errBoom := errors.New("boom")
 	pbCreds := "credentials"
 	requirements := "fakeRequirements"
 	inlineYaml := "IamYaml"
-	myRole := v1alpha1.Role{Name: "MyRole"}
+	myRole := shared.Role{Name: "MyRole"}
 
 	type fields struct {
 		kube    client.Client
-		usage   resource.Tracker
+		usage   resource.LegacyTracker
 		fs      afero.Afero
-		ansible func(dir string) params
+		ansible func(dir string) Params
 	}
 
 	type args struct {
@@ -170,7 +191,7 @@ func TestConnect(t *testing.T) {
 		"TrackUsageError": {
 			reason: "We should return any error encountered while tracking ProviderConfig usage",
 			fields: fields{
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return errBoom }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return errBoom }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 			},
 			args: args{
@@ -186,15 +207,15 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(errBoom),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 			},
 			args: args{
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
 					},
 				},
@@ -211,22 +232,22 @@ func TestConnect(t *testing.T) {
 							// here. We cause an error to be returned by asking
 							// for credentials from the environment, but not
 							// specifying an environment variable.
-							pc.Spec.Credentials = []v1alpha1.ProviderCredentials{{
-								Source: xpv1.CredentialsSourceEnvironment,
+							pc.Spec.Credentials = []shared.ProviderCredentials{{
+								Source: xpv2.CredentialsSourceEnvironment,
 							}}
 						}
 						return nil
 					}),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
 			},
 			args: args{
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
 					},
 				},
@@ -239,15 +260,15 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
 						if pc, ok := obj.(*v1alpha1.ProviderConfig); ok {
-							pc.Spec.Credentials = []v1alpha1.ProviderCredentials{{
+							pc.Spec.Credentials = []shared.ProviderCredentials{{
 								Filename: pbCreds,
-								Source:   xpv1.CredentialsSourceNone,
+								Source:   xpv2.CredentialsSourceNone,
 							}}
 						}
 						return nil
 					}),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -259,8 +280,8 @@ func TestConnect(t *testing.T) {
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
 					},
 				},
@@ -273,15 +294,15 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
 						if pc, ok := obj.(*v1alpha1.ProviderConfig); ok {
-							pc.Spec.Credentials = []v1alpha1.ProviderCredentials{{
+							pc.Spec.Credentials = []shared.ProviderCredentials{{
 								Filename: ".git-credentials",
-								Source:   xpv1.CredentialsSourceNone,
+								Source:   xpv2.CredentialsSourceNone,
 							}}
 						}
 						return nil
 					}),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -293,11 +314,11 @@ func TestConnect(t *testing.T) {
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
-						ForProvider: v1alpha1.AnsibleRunParameters{
-							Roles: []v1alpha1.Role{
+						ForProvider: shared.AnsibleRunParameters{
+							Roles: []shared.Role{
 								myRole,
 							},
 						},
@@ -312,7 +333,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -324,10 +345,10 @@ func TestConnect(t *testing.T) {
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
-						ForProvider: v1alpha1.AnsibleRunParameters{
+						ForProvider: shared.AnsibleRunParameters{
 							PlaybookInline: &inlineYaml,
 						},
 					},
@@ -341,7 +362,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -353,10 +374,10 @@ func TestConnect(t *testing.T) {
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
-						ForProvider: v1alpha1.AnsibleRunParameters{
+						ForProvider: shared.AnsibleRunParameters{
 							InventoryInline: &inlineYaml,
 						},
 					},
@@ -370,7 +391,7 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs: afero.Afero{
 					Fs: &ErrFs{
 						Fs:        afero.NewMemMapFs(),
@@ -382,10 +403,10 @@ func TestConnect(t *testing.T) {
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
-						ForProvider: v1alpha1.AnsibleRunParameters{
+						ForProvider: shared.AnsibleRunParameters{
 							InventoryInline: &inlineYaml,
 						},
 					},
@@ -399,11 +420,11 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string) params {
+				ansible: func(_ string) Params {
 					return MockPs{
-						MockInit: func(_ context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
+						MockInit: func(_ context.Context, _ *shared.AnsibleRunParameters, _ metav1.Object, _ map[string]string) (*ansible.Runner, error) {
 							return nil, errBoom
 						},
 						MockGalaxyInstall: func(_ context.Context, _ map[string]string, requirementsType string) error {
@@ -419,8 +440,8 @@ func TestConnect(t *testing.T) {
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
 					},
 				},
@@ -438,11 +459,11 @@ func TestConnect(t *testing.T) {
 						return nil
 					}),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string) params {
+				ansible: func(_ string) Params {
 					return MockPs{
-						MockInit: func(_ context.Context, _ *v1alpha1.AnsibleRun, _ map[string]string) (*ansible.Runner, error) {
+						MockInit: func(_ context.Context, _ *shared.AnsibleRunParameters, _ metav1.Object, _ map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
 						MockGalaxyInstall: func(_ context.Context, _ map[string]string, _ string) error {
@@ -458,8 +479,8 @@ func TestConnect(t *testing.T) {
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
 					},
 				},
@@ -472,11 +493,11 @@ func TestConnect(t *testing.T) {
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				usage: resource.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }), //nolint:staticcheck // SA1019: the legacy cluster-scoped API group is LegacyManaged by definition
 				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
-				ansible: func(_ string) params {
+				ansible: func(_ string) Params {
 					return MockPs{
-						MockInit: func(_ context.Context, _ *v1alpha1.AnsibleRun, _ map[string]string) (*ansible.Runner, error) {
+						MockInit: func(_ context.Context, _ *shared.AnsibleRunParameters, _ metav1.Object, _ map[string]string) (*ansible.Runner, error) {
 							return nil, nil
 						},
 						MockGalaxyInstall: func(_ context.Context, _ map[string]string, _ string) error {
@@ -492,8 +513,8 @@ func TestConnect(t *testing.T) {
 				cr: &v1alpha1.AnsibleRun{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.AnsibleRunSpec{
-						ResourceSpec: xpv1.ResourceSpec{
-							ProviderConfigReference: &xpv1.Reference{},
+						ClusterManagedResourceSpec: xpv2.ClusterManagedResourceSpec{
+							ProviderConfigReference: &xpv2.Reference{},
 						},
 					},
 				},
@@ -504,13 +525,11 @@ func TestConnect(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := connector{
-				kube:    tc.fields.kube,
-				usage:   tc.fields.usage,
-				fs:      tc.fields.fs,
-				ansible: tc.fields.ansible,
+			c, err := NewConnector(tc.fields.kube, tc.fields.fs, tc.fields.ansible, clusterScope(tc.fields.usage))
+			if err != nil {
+				t.Fatalf("\n%s\nNewConnector(...): unexpected error: %v\n", tc.reason, err)
 			}
-			_, err := c.Connect(tc.args.ctx, tc.args.cr)
+			_, err = c.Connect(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Connect(...): -want error, +got error:\n%s\n", tc.reason, diff)
 			}
@@ -534,7 +553,7 @@ func TestObserve(t *testing.T) {
 	type want struct {
 		o          managed.ExternalObservation
 		err        error
-		conditions []xpv1.Condition
+		conditions []xpv2.Condition
 	}
 
 	testPlaybook := "fake playbook"
@@ -545,17 +564,17 @@ func TestObserve(t *testing.T) {
 			},
 		},
 		Spec: v1alpha1.AnsibleRunSpec{
-			ForProvider: v1alpha1.AnsibleRunParameters{
+			ForProvider: shared.AnsibleRunParameters{
 				PlaybookInline: &testPlaybook,
 			},
 		},
 	}
 
 	testRunWithReconcileSuccess := testRun.DeepCopy()
-	testRunWithReconcileSuccess.SetConditions(xpv1.ReconcileSuccess())
+	testRunWithReconcileSuccess.SetConditions(xpv2.ReconcileSuccess())
 
 	testRunWithReconcileError := testRun.DeepCopy()
-	testRunWithReconcileError.SetConditions(xpv1.ReconcileError(errors.New("fake error")))
+	testRunWithReconcileError.SetConditions(xpv2.ReconcileError(errors.New("fake error")))
 
 	cases := map[string]struct {
 		reason string
@@ -594,7 +613,7 @@ func TestObserve(t *testing.T) {
 			},
 			want: want{
 				err:        fmt.Errorf("%s: %w", errGetAnsibleRun, errBoom),
-				conditions: []xpv1.Condition{xpv1.Unavailable()},
+				conditions: []xpv2.Condition{xpv2.Unavailable()},
 			},
 		},
 		"UnchangedWithObserveAndDeletePolicy": {
@@ -688,7 +707,7 @@ func TestObserve(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			e := external{runner: tc.fields.runner, kube: tc.fields.kube}
+			e := external[*v1alpha1.AnsibleRun]{runner: tc.fields.runner, kube: tc.fields.kube, scope: clusterScope(nil)}
 			got, err := e.Observe(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want error, +got error:\n%s\n", tc.reason, diff)
@@ -696,13 +715,18 @@ func TestObserve(t *testing.T) {
 			if diff := cmp.Diff(tc.want.o, got); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want, +got:\n%s\n", tc.reason, diff)
 			}
+			// The cluster scope orphans the external resource because we
+			// cannot observe it; Observe must apply that on every call.
+			if got := tc.args.cr.GetDeletionPolicy(); got != xpv2.DeletionOrphan {
+				t.Errorf("\n%s\ne.Observe(...): deletion policy: want %q, got %q\n", tc.reason, xpv2.DeletionOrphan, got)
+			}
 		})
 	}
 }
 
 func TestCreateOrUpdate(t *testing.T) {
 	errBoom := errors.New("boom")
-	unavaliableCond := xpv1.Unavailable()
+	unavaliableCond := xpv2.Unavailable()
 	unavaliableCond.Message = errBoom.Error()
 
 	type fields struct {
@@ -718,7 +742,7 @@ func TestCreateOrUpdate(t *testing.T) {
 	type want struct {
 		o          managed.ExternalCreation
 		err        error
-		conditions []xpv1.Condition
+		conditions []xpv2.Condition
 	}
 
 	cases := map[string]struct {
@@ -750,7 +774,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			},
 			want: want{
 				err:        fmt.Errorf("running ansible: %w", errBoom),
-				conditions: []xpv1.Condition{unavaliableCond},
+				conditions: []xpv2.Condition{unavaliableCond},
 			},
 		},
 		"SuccessObserveAndDelete": {
@@ -778,7 +802,7 @@ func TestCreateOrUpdate(t *testing.T) {
 				},
 			},
 			want: want{
-				conditions: []xpv1.Condition{xpv1.Available()},
+				conditions: []xpv2.Condition{xpv2.Available()},
 			},
 		},
 		"RunErrorWithCheckWhenObservePolicy": {
@@ -805,7 +829,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			},
 			want: want{
 				err:        fmt.Errorf("running ansible: %w", errBoom),
-				conditions: []xpv1.Condition{unavaliableCond},
+				conditions: []xpv2.Condition{unavaliableCond},
 			},
 		},
 		"SuccessCheckWhenObserve": {
@@ -833,14 +857,14 @@ func TestCreateOrUpdate(t *testing.T) {
 				},
 			},
 			want: want{
-				conditions: []xpv1.Condition{xpv1.Available()},
+				conditions: []xpv2.Condition{xpv2.Available()},
 			},
 		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			e := external{runner: tc.fields.runner, kube: tc.fields.kube}
+			e := external[*v1alpha1.AnsibleRun]{runner: tc.fields.runner, kube: tc.fields.kube, scope: clusterScope(nil)}
 			got, err := e.Create(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want error, +got error:\n%s\n", tc.reason, diff)
@@ -856,7 +880,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			if diff := cmp.Diff(
 				tc.want.conditions,
 				tc.args.cr.Status.Conditions,
-				cmpopts.IgnoreFields(xpv1.Condition{}, "LastTransitionTime"),
+				cmpopts.IgnoreFields(xpv2.Condition{}, "LastTransitionTime"),
 			); diff != "" {
 				t.Errorf("ansiblerun conditions: (-want +got):\n%s", diff)
 			}
@@ -1002,7 +1026,7 @@ func TestDelete(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			e := external{runner: tc.fields.runner, kube: tc.fields.kube}
+			e := external[*v1alpha1.AnsibleRun]{runner: tc.fields.runner, kube: tc.fields.kube, scope: clusterScope(nil)}
 			_, err := e.Delete(tc.args.ctx, tc.args.cr)
 			if diff := cmp.Diff(tc.want, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ne.Delete(...): -want error, +got error:\n%s\n", tc.reason, diff)
@@ -1014,7 +1038,7 @@ func TestDelete(t *testing.T) {
 func TestAcquireAndHoldShard(t *testing.T) {
 	cases := map[string]struct {
 		reason  string
-		conn    connector
+		leaser  *ShardLeaser
 		opts    controller.Options
 		setup   SetupOptions
 		want    uint32
@@ -1022,7 +1046,7 @@ func TestAcquireAndHoldShard(t *testing.T) {
 	}{
 		"SingleReplica": {
 			reason: "When ReplicasCount is 1 no lease should be acquired and shard 0 should be returned immediately",
-			conn:   connector{},
+			leaser: NewShardLeaser("", "", nil),
 			opts:   controller.Options{},
 			setup: SetupOptions{
 				ReplicasCount: 1,
@@ -1034,12 +1058,12 @@ func TestAcquireAndHoldShard(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := tc.conn.acquireAndHoldShard(tc.opts, tc.setup)
+			got, err := tc.leaser.AcquireAndHoldShard(tc.opts, tc.setup)
 			if diff := cmp.Diff(tc.wantErr, err, test.EquateErrors()); diff != "" {
-				t.Errorf("\n%s\nacquireAndHoldShard(...): -want error, +got error:\n%s\n", tc.reason, diff)
+				t.Errorf("\n%s\nAcquireAndHoldShard(...): -want error, +got error:\n%s\n", tc.reason, diff)
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("\n%s\nacquireAndHoldShard(...): -want, +got:\n%s\n", tc.reason, diff)
+				t.Errorf("\n%s\nAcquireAndHoldShard(...): -want, +got:\n%s\n", tc.reason, diff)
 			}
 		})
 	}

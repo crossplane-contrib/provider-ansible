@@ -17,8 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -65,9 +64,9 @@ type AnsibleRunParameters struct {
 type Inventory struct {
 	// Source of the inventory.
 	// +kubebuilder:validation:Enum=None;Secret;InjectedIdentity;Environment;Filesystem
-	Source xpv1.CredentialsSource `json:"source"`
+	Source xpv2.CredentialsSource `json:"source"`
 
-	xpv1.CommonCredentialSelectors `json:",inline"`
+	xpv2.CommonCredentialSelectors `json:",inline"`
 }
 
 // AnsibleRunObservation are the observable fields of a AnsibleRun.
@@ -76,37 +75,39 @@ type AnsibleRunObservation struct {
 	// details.
 }
 
-// A AnsibleRunSpec defines the desired state of a AnsibleRun.
-type AnsibleRunSpec struct {
-	xpv1.ResourceSpec `json:",inline"`
-	ForProvider       AnsibleRunParameters `json:"forProvider"`
+// A Var represents key/value variable.
+type Var struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
-// A AnsibleRunStatus represents the observed state of a AnsibleRun.
-type AnsibleRunStatus struct {
-	xpv1.ResourceStatus `json:",inline"`
-	AtProvider          AnsibleRunObservation `json:"atProvider,omitempty"`
+// A ProviderConfigSpec defines the desired state of a ProviderConfig.
+type ProviderConfigSpec struct {
+	// Credentials are required to authenticate to private remote(s).
+	// +optional
+	Credentials []ProviderCredentials `json:"credentials"`
+
+	// Requirements manage the necessary dependencies to run ansible collection.
+	// It is expressed as inline yaml.
+	// TODO support fetching Roles
+	// +optional
+	Requirements *string `json:"requirements,omitempty"`
+
+	// Vars are used to customize the provider default behavior.
+	// +optional
+	Vars []Var `json:"vars,omitempty"`
 }
 
-// +kubebuilder:object:root=true
+// ProviderCredentials required to authenticate.
+type ProviderCredentials struct {
 
-// AnsibleRun represents a set of Ansible Playbooks.
-// +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp"
-// +kubebuilder:resource:scope=Cluster
-type AnsibleRun struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	// Filename to which these provider credentials
+	// should be written.
+	Filename string `json:"filename"`
 
-	Spec   AnsibleRunSpec   `json:"spec"`
-	Status AnsibleRunStatus `json:"status,omitempty"`
-}
+	// Source of the provider credentials.
+	// +kubebuilder:validation:Enum=None;Secret;InjectedIdentity;Environment;Filesystem
+	Source xpv2.CredentialsSource `json:"source"`
 
-// +kubebuilder:object:root=true
-
-// AnsibleRunList is a collection of AnsibleRun.
-type AnsibleRunList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []AnsibleRun `json:"items"`
+	xpv2.CommonCredentialSelectors `json:",inline"`
 }

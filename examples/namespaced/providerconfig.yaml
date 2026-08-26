@@ -1,0 +1,42 @@
+# A namespaced ProviderConfig is only usable by AnsibleRuns in its own
+# namespace, and may only reference Secrets in that namespace.
+#
+# secretRef.namespace is a required field in the CRD schema - it cannot be
+# omitted - and for a namespaced ProviderConfig it must equal this object's
+# own namespace ("team-a" here); any other value is refused when the
+# ProviderConfig is resolved. See "Secrets are namespace-local" in the
+# README.
+#
+# The Secret below holds the same material as the one in
+# clusterproviderconfig.yaml, but in this namespace rather than
+# crossplane-system, so that this file can be applied on its own as a
+# standalone example. The two files may also be applied together: their
+# Secrets live in different namespaces and do not collide.
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: team-a
+  name: gcp-credentials
+type: Opaque
+data:
+  credentials: QkFTRTY0RU5DT0RFRF9QUk9WSURFUl9DUkVEUw==
+---
+apiVersion: ansible.m.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  namespace: team-a
+  name: default
+spec:
+  credentials:
+    - filename: gcp-credentials.json
+      source: Secret
+      secretRef:
+        namespace: team-a
+        name: gcp-credentials
+        key: credentials
+  requirements: |
+    ---
+    collections:
+      - name: google.cloud
+        source: https://galaxy.ansible.com
+        version: "1.0.2"

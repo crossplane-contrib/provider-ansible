@@ -33,7 +33,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	"github.com/crossplane-contrib/provider-ansible/apis/cluster/v1alpha1"
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 )
 
 const (
@@ -98,12 +99,12 @@ func TestAnsibleRunPolicyInit(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.policy, func(t *testing.T) {
 			objectMeta.Annotations = map[string]string{AnnotationKeyPolicyRun: tc.policy}
-			myRole := v1alpha1.Role{Name: "MyRole"}
+			myRole := shared.Role{Name: "MyRole"}
 			cr := v1alpha1.AnsibleRun{
 				ObjectMeta: objectMeta,
 				Spec: v1alpha1.AnsibleRunSpec{
-					ForProvider: v1alpha1.AnsibleRunParameters{
-						Roles: []v1alpha1.Role{myRole},
+					ForProvider: shared.AnsibleRunParameters{
+						Roles: []shared.Role{myRole},
 					},
 				},
 			}
@@ -112,7 +113,7 @@ func TestAnsibleRunPolicyInit(t *testing.T) {
 				WorkingDirPath: ansibleCtx,
 			}
 
-			testRunner, err := ps.Init(ctx, &cr, nil)
+			testRunner, err := ps.Init(ctx, &cr.Spec.ForProvider, &cr, nil)
 			if err != nil {
 				t.Fatalf("Error occurred unexpectedly: %v", err)
 			}
@@ -143,7 +144,7 @@ func TestInit(t *testing.T) {
 			},
 		},
 		Spec: v1alpha1.AnsibleRunSpec{
-			ForProvider: v1alpha1.AnsibleRunParameters{
+			ForProvider: shared.AnsibleRunParameters{
 				PlaybookInline: &fakePlaybook,
 			},
 		},
@@ -163,7 +164,7 @@ func TestInit(t *testing.T) {
 		artifactsHistoryLimit: 3,
 	}
 
-	runner, err := params.Init(context.Background(), run, nil)
+	runner, err := params.Init(context.Background(), &run.Spec.ForProvider, run, nil)
 	if err != nil {
 		t.Fatalf("Unexpected Init() error: %v", err)
 	}
@@ -186,6 +187,25 @@ func TestInit(t *testing.T) {
 	cmd := runner.cmdFunc(nil, false)
 	if cmd.String() != expectedCmd.String() {
 		t.Errorf("Unexpected Runner.cmdFunc output %q expected %q", expectedCmd.String(), cmd.String())
+	}
+}
+
+func TestInitAcceptsSharedParameters(t *testing.T) {
+	dir := t.TempDir()
+	inline := "---\n- hosts: localhost\n"
+
+	p := Parameters{WorkingDirPath: dir}
+	obj := &metav1.ObjectMeta{Name: "test", Annotations: map[string]string{}}
+
+	r, err := p.Init(context.Background(), &shared.AnsibleRunParameters{PlaybookInline: &inline}, obj, map[string]string{})
+	if err != nil {
+		t.Fatalf("Init(...): unexpected error: %v", err)
+	}
+	if r == nil {
+		t.Fatal("Init(...): expected a runner, got nil")
+	}
+	if diff := cmp.Diff(dir, r.Path); diff != "" {
+		t.Errorf("Init(...): -want path, +got path:\n%s", diff)
 	}
 }
 

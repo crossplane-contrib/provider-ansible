@@ -28,33 +28,23 @@ import (
 	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
-	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
-	"github.com/crossplane/crossplane-runtime/pkg/controller"
-	"github.com/crossplane/crossplane-runtime/pkg/event"
-	"github.com/crossplane/crossplane-runtime/pkg/logging"
-	"github.com/crossplane/crossplane-runtime/pkg/meta"
-	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
-	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
-	"github.com/crossplane/crossplane-runtime/pkg/resource"
-	"github.com/crossplane/crossplane-runtime/pkg/statemetrics"
-	"github.com/google/uuid"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/meta"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 	"github.com/spf13/afero"
-	coordinationv1 "k8s.io/api/coordination/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
 	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
 	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
-	"github.com/crossplane-contrib/provider-ansible/pkg/shardutil"
 )
 
 const (
@@ -73,6 +63,9 @@ const (
 	errMarshalRoles        = "cannot marshal Roles into yaml document"
 	errMkdir               = "cannot make directory"
 	errInit                = "cannot initialize Ansible client"
+	errForeignSecret       = "a namespaced resource may only reference Secrets in its own namespace"
+	errIncompleteScope     = "cannot build an AnsibleRun connector: these required Scope fields are nil"
+	errNilPCSpec           = "the resolved ProviderConfig has no spec"
 	gitCredentialsFilename = ".git-credentials"
 
 	errGetAnsibleRun     = "cannot get AnsibleRun"
@@ -81,19 +74,59 @@ const (
 )
 
 const (
-	leaseNameTemplate           = "provider-ansible-lease-%d"
-	leaseDurationSeconds        = 30
-	leaseRenewalInterval        = 5 * time.Second
-	leaseAcquireAttemptInterval = 5 * time.Second
-)
-
-const (
 	baseWorkingDir = "/ansibleDir"
 )
 
-type params interface {
-	Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error)
+// Run is what the shared core needs from either group's AnsibleRun type.
+type Run interface {
+	resource.Managed
+	GetForProvider() *shared.AnsibleRunParameters
+}
+
+// Params is the Ansible engine entrypoint the core drives.
+type Params interface {
+	Init(ctx context.Context, params *shared.AnsibleRunParameters, o metav1.Object, behaviorVars map[string]string) (*ansible.Runner, error)
 	GalaxyInstall(ctx context.Context, behaviorVars map[string]string, requirementsType string) error
+}
+
+// Scope carries the per-API-group behaviour the shared core cannot infer.
+type Scope[T Run] struct {
+	// Track records that the supplied managed resource is using its
+	// ProviderConfig.
+	Track func(ctx context.Context, cr T) error
+
+	// ResolveProviderConfig returns the provider config the supplied managed
+	// resource refers to, together with the secret-namespace policy that
+	// applies to that config's own credentials.
+	ResolveProviderConfig func(ctx context.Context, kube client.Client, cr T) (ResolvedProviderConfig, error)
+
+	// SecretNamespace returns the namespace Secrets are read from, and
+	// whether the managed resource's own selectors may instead name a
+	// namespace of their own choosing. It governs what the managed resource
+	// itself declares - spec.forProvider.inventories. A provider config's own
+	// credentials take their allowExplicit from
+	// ResolvedProviderConfig.AllowExplicitSecretNamespace instead.
+	SecretNamespace func(cr T) (ns string, allowExplicit bool)
+
+	// BeforeObserve, when set, runs at the very start of every Observe.
+	BeforeObserve func(cr T)
+}
+
+// ResolvedProviderConfig is a provider config the core has resolved, together
+// with the secret-namespace policy that applies to its own credentials.
+//
+// The policy travels with the config rather than with the managed resource
+// because the two are not the same question. What a namespaced AnsibleRun
+// declares for itself is confined to its own namespace; what a cluster-scoped
+// ClusterProviderConfig declares is not. See the README's
+// "ClusterProviderConfig credentials are cluster-wide" section.
+type ResolvedProviderConfig struct {
+	// Spec is the resolved provider config's spec.
+	Spec *shared.ProviderConfigSpec
+
+	// AllowExplicitSecretNamespace reports whether this provider config's own
+	// credentials may name a namespace other than the managed resource's.
+	AllowExplicitSecretNamespace bool
 }
 
 type ansibleRunner interface {
@@ -113,87 +146,78 @@ type SetupOptions struct {
 	LeaseNamespace         string
 	ProviderCtx            context.Context
 	ProviderCancel         context.CancelFunc
+
+	// Shard is the index of the shard this provider process owns, as returned
+	// by ShardLeaser.AcquireAndHoldShard. It is acquired once per process,
+	// before any per-API-group Setup runs, and every group's controller
+	// filters on it.
+	Shard uint32
 }
 
-// Setup adds a controller that reconciles AnsibleRun managed resources.
-func Setup(mgr ctrl.Manager, o controller.Options, s SetupOptions) error {
-	name := managed.ControllerName(v1alpha1.AnsibleRunGroupKind)
-
-	fs := afero.Afero{Fs: afero.NewOsFs()}
-
-	galaxyBinary, err := galaxyutil.GalaxyBinary()
-	if err != nil {
-		return err
+// ResolveSecretSelectors applies a secret-namespace policy to a credential
+// selector. When allowExplicit is true the selector is returned untouched, so
+// it may name any namespace. When it is false the selector is confined to ns:
+// an empty namespace is filled in, and a differing one is refused.
+//
+// Callers take allowExplicit from Scope.SecretNamespace for selectors the
+// managed resource itself declares, and from
+// ResolvedProviderConfig.AllowExplicitSecretNamespace for the provider
+// config's own credentials.
+func ResolveSecretSelectors(sel xpv2.CommonCredentialSelectors, ns string, allowExplicit bool) (xpv2.CommonCredentialSelectors, error) {
+	if allowExplicit || sel.SecretRef == nil {
+		return sel, nil
 	}
-	runnerBinary, err := runnerutil.RunnerBinary()
-	if err != nil {
-		return err
+	if sel.SecretRef.Namespace != "" && sel.SecretRef.Namespace != ns {
+		return sel, fmt.Errorf("%s: secretRef namespace %q differs from the resource namespace %q", errForeignSecret, sel.SecretRef.Namespace, ns)
 	}
-
-	c := &connector{
-		kube:  mgr.GetClient(),
-		usage: resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
-		fs:    fs,
-		ansible: func(dir string) params {
-			return ansible.Parameters{
-				WorkingDirPath:        dir,
-				GalaxyBinary:          galaxyBinary,
-				RunnerBinary:          runnerBinary,
-				CollectionsPath:       s.AnsibleCollectionsPath,
-				RolesPath:             s.AnsibleRolesPath,
-				ArtifactsHistoryLimit: s.ArtifactsHistoryLimit,
-			}
-		},
-		replicaID:      uuid.New().String(),
-		leaseNamespace: s.LeaseNamespace,
-		logger:         o.Logger,
-	}
-
-	opts := []managed.ReconcilerOption{
-		managed.WithTypedExternalConnector(c),
-		managed.WithLogger(o.Logger.WithValues("controller", name)),
-		managed.WithTimeout(s.Timeout),
-		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
-	}
-
-	if o.MetricOptions != nil {
-		opts = append(opts, managed.WithMetricRecorder(o.MetricOptions.MRMetrics))
-		if o.MetricOptions.MRStateMetrics != nil {
-			stateMetricsRecorder := statemetrics.NewMRStateRecorder(mgr.GetClient(), o.Logger, o.MetricOptions.MRStateMetrics, &v1alpha1.AnsibleRunList{}, o.MetricOptions.PollStateMetricInterval)
-			if err := mgr.Add(stateMetricsRecorder); err != nil {
-				return fmt.Errorf("cannot register MR state metrics recorder for kind v1alpha1.AnsibleRunList: %w", err)
-			}
-		}
-	}
-
-	r := managed.NewReconciler(mgr, resource.ManagedKind(v1alpha1.AnsibleRunGroupVersionKind), opts...)
-
-	currentShard, err := c.acquireAndHoldShard(o, s)
-	if err != nil {
-		return fmt.Errorf("cannot acquire and hold shard: %w", err)
-	}
-
-	return ctrl.NewControllerManagedBy(mgr).
-		Named(name).
-		WithOptions(o.ForControllerRuntime()).
-		For(&v1alpha1.AnsibleRun{}).
-		WithEventFilter(shardutil.IsResourceForShard(currentShard, s.ReplicasCount)).
-		Complete(ratelimiter.NewReconciler(name, r, o.GlobalRateLimiter))
+	ref := *sel.SecretRef
+	ref.Namespace = ns
+	out := sel
+	out.SecretRef = &ref
+	return out, nil
 }
 
-// A connector is expected to produce an ExternalClient when its Connect method
+// A Connector is expected to produce an ExternalClient when its Connect method
 // is called.
-type connector struct {
-	kube           client.Client
-	usage          resource.Tracker
-	fs             afero.Afero
-	ansible        func(dir string) params
-	replicaID      string
-	leaseNamespace string
-	logger         logging.Logger
+type Connector[T Run] struct {
+	kube    client.Client
+	fs      afero.Afero
+	ansible func(dir string) Params
+	scope   Scope[T]
 }
 
-func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.TypedExternalClient[*v1alpha1.AnsibleRun], error) { //nolint:gocyclo
+// NewConnector returns a Connector that drives Ansible for the API group
+// described by the supplied Scope.
+//
+// Every Scope field except BeforeObserve is required. They are validated here
+// so that a mis-wired API group fails when its controller is set up, rather
+// than panicking deep in the reconcile loop the first time a resource of that
+// group is observed.
+func NewConnector[T Run](kube client.Client, fs afero.Afero, ansible func(dir string) Params, scope Scope[T]) (*Connector[T], error) {
+	var missing []string
+	if scope.Track == nil {
+		missing = append(missing, "Track")
+	}
+	if scope.ResolveProviderConfig == nil {
+		missing = append(missing, "ResolveProviderConfig")
+	}
+	if scope.SecretNamespace == nil {
+		missing = append(missing, "SecretNamespace")
+	}
+	if len(missing) != 0 {
+		return nil, fmt.Errorf("%s: %s", errIncompleteScope, strings.Join(missing, ", "))
+	}
+
+	return &Connector[T]{
+		kube:    kube,
+		fs:      fs,
+		ansible: ansible,
+		scope:   scope,
+	}, nil
+}
+
+// Connect produces an ExternalClient for the supplied managed resource.
+func (c *Connector[T]) Connect(ctx context.Context, cr T) (managed.TypedExternalClient[T], error) { //nolint:gocyclo
 	// NOTE(negz): This method is slightly over our complexity goal, but I
 	// can't immediately think of a clean way to decompose it without
 	// affecting readability.
@@ -205,22 +229,40 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 		return nil, fmt.Errorf("%s: %s: %w", baseWorkingDir, errMkdir, err)
 	}
 
-	if err := c.usage.Track(ctx, cr); err != nil {
+	if err := c.scope.Track(ctx, cr); err != nil {
 		return nil, fmt.Errorf("%s: %w", errTrackPCUsage, err)
 	}
 
-	pc := &v1alpha1.ProviderConfig{}
-	if err := c.kube.Get(ctx, types.NamespacedName{Name: cr.GetProviderConfigReference().Name}, pc); err != nil {
+	pc, err := c.scope.ResolveProviderConfig(ctx, c.kube, cr)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", errGetPC, err)
 	}
+	if pc.Spec == nil {
+		return nil, fmt.Errorf("%s: %s", errGetPC, errNilPCSpec)
+	}
+	pcSpec := pc.Spec
+
+	// ns and allowExplicit govern what the managed resource itself declares:
+	// the inventories loop below. The two credential loops take their policy
+	// from the resolved provider config instead. When credsAllowExplicit is
+	// true ns is inert for them and the credential's own secretRef.namespace
+	// decides, so a cluster-scoped ClusterProviderConfig's credentials may
+	// name any namespace.
+	ns, allowExplicit := c.scope.SecretNamespace(cr)
+	credsAllowExplicit := pc.AllowExplicitSecretNamespace
+
 	var inventoryPerm os.FileMode = 0600
-	if cr.Spec.ForProvider.ExecutableInventory {
+	if cr.GetForProvider().ExecutableInventory {
 		inventoryPerm = 0700
 	}
 	// Saved inventory needed for ansible content hosts
 	var buff bytes.Buffer
-	for _, i := range cr.Spec.ForProvider.Inventories {
-		data, err := resource.CommonCredentialExtractor(ctx, i.Source, c.kube, i.CommonCredentialSelectors)
+	for _, i := range cr.GetForProvider().Inventories {
+		sel, err := ResolveSecretSelectors(i.CommonCredentialSelectors, ns, allowExplicit)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", errGetInventory, err)
+		}
+		data, err := resource.CommonCredentialExtractor(ctx, i.Source, c.kube, sel)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", errGetInventory, err)
 		}
@@ -228,8 +270,8 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 			return nil, err
 		}
 	}
-	if cr.Spec.ForProvider.InventoryInline != nil {
-		if _, err := buff.WriteString(*cr.Spec.ForProvider.InventoryInline + "\n"); err != nil {
+	if cr.GetForProvider().InventoryInline != nil {
+		if _, err := buff.WriteString(*cr.GetForProvider().InventoryInline + "\n"); err != nil {
 			return nil, err
 		}
 	}
@@ -252,11 +294,15 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 	if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
 		return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
 	}
-	for _, cd := range pc.Spec.Credentials {
+	for _, cd := range pcSpec.Credentials {
 		if cd.Filename != gitCredentialsFilename {
 			continue
 		}
-		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
+		sel, err := ResolveSecretSelectors(cd.CommonCredentialSelectors, ns, credsAllowExplicit)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
+		}
+		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, sel)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
 		}
@@ -273,24 +319,28 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 	}
 
 	var requirementRoles []byte
-	if len(cr.Spec.ForProvider.Roles) != 0 {
-		// marshall cr.Spec.ForProvider.Roles entries into yaml document
-		rolesMap := make(map[string][]v1alpha1.Role)
-		rolesMap["roles"] = cr.Spec.ForProvider.Roles
+	if len(cr.GetForProvider().Roles) != 0 {
+		// marshall the Roles entries into a yaml document
+		rolesMap := make(map[string][]shared.Role)
+		rolesMap["roles"] = cr.GetForProvider().Roles
 		var err error
 		requirementRoles, err = yaml.Marshal(&rolesMap)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", errMarshalRoles, err)
 		}
-	} else if cr.Spec.ForProvider.PlaybookInline != nil {
-		if err := c.fs.WriteFile(filepath.Join(dir, runnerutil.PlaybookYml), []byte(*cr.Spec.ForProvider.PlaybookInline), 0600); err != nil {
+	} else if cr.GetForProvider().PlaybookInline != nil {
+		if err := c.fs.WriteFile(filepath.Join(dir, runnerutil.PlaybookYml), []byte(*cr.GetForProvider().PlaybookInline), 0600); err != nil {
 			return nil, fmt.Errorf("%s: %w", errWriteAnsibleRun, err)
 		}
 	}
 
 	// Saved credentials needed for ansible playbooks execution
-	for _, cd := range pc.Spec.Credentials {
-		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
+	for _, cd := range pcSpec.Credentials {
+		sel, err := ResolveSecretSelectors(cd.CommonCredentialSelectors, ns, credsAllowExplicit)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
+		}
+		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, sel)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
 		}
@@ -303,15 +353,15 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 	ps := c.ansible(dir)
 
 	// prepare behavior vars
-	behaviorVars := addBehaviorVars(pc)
+	behaviorVars := addBehaviorVars(pcSpec)
 
 	// Requirements is a list of collections/roles to be installed, it is stored in requirements file
 	requirementRolesStr := string(requirementRoles)
-	if pc.Spec.Requirements != nil || requirementRolesStr != "" {
+	if pcSpec.Requirements != nil || requirementRolesStr != "" {
 		var installCollections, installRoles bool
 		var reqSlice []string
-		if pc.Spec.Requirements != nil {
-			reqSlice = append(reqSlice, *pc.Spec.Requirements)
+		if pcSpec.Requirements != nil {
+			reqSlice = append(reqSlice, *pcSpec.Requirements)
 			installCollections = true
 			installRoles = true
 		}
@@ -339,32 +389,32 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 
 	}
 
-	r, err := ps.Init(ctx, cr, behaviorVars)
+	r, err := ps.Init(ctx, cr.GetForProvider(), cr, behaviorVars)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", errInit, err)
 
 	}
 
-	return &external{runner: r, kube: c.kube}, nil
+	return &external[T]{runner: r, kube: c.kube, scope: c.scope}, nil
 }
 
-type external struct {
+type external[T Run] struct {
 	runner ansibleRunner
 	kube   client.Client
+	scope  Scope[T]
 }
 
-func (e *external) Disconnect(ctx context.Context) error {
+func (c *external[T]) Disconnect(ctx context.Context) error {
 	// Unimplemented, required by newer versions of crossplane-runtime
 	return nil
 }
 
 // nolint: gocyclo
 // TODO reduce cyclomatic complexity
-func (c *external) Observe(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.ExternalObservation, error) {
-	/* set Deletion Policy to Orphan as we cannot observe the external resource.
-	   So we won't wait for external resource deletion before attempting
-	   to delete the managed resource */
-	cr.SetDeletionPolicy(xpv1.DeletionOrphan)
+func (c *external[T]) Observe(ctx context.Context, cr T) (managed.ExternalObservation, error) {
+	if c.scope.BeforeObserve != nil {
+		c.scope.BeforeObserve(cr)
+	}
 
 	switch c.runner.GetAnsibleRunPolicy().Name {
 	case "ObserveAndDelete", "":
@@ -374,7 +424,10 @@ func (c *external) Observe(ctx context.Context, cr *v1alpha1.AnsibleRun) (manage
 		if meta.WasDeleted(cr) {
 			return managed.ExternalObservation{ResourceExists: true}, nil
 		}
-		observed := cr.DeepCopy()
+		observed, ok := cr.DeepCopyObject().(T)
+		if !ok {
+			return managed.ExternalObservation{}, fmt.Errorf("%s: %s", errGetAnsibleRun, errNotAnsibleRun)
+		}
 		if err := c.kube.Get(ctx, types.NamespacedName{
 			Namespace: observed.GetNamespace(),
 			Name:      observed.GetName(),
@@ -384,7 +437,7 @@ func (c *external) Observe(ctx context.Context, cr *v1alpha1.AnsibleRun) (manage
 			}
 			return managed.ExternalObservation{}, fmt.Errorf("%s: %w", errGetAnsibleRun, err)
 		}
-		var lastParameters *v1alpha1.AnsibleRunParameters
+		var lastParameters *shared.AnsibleRunParameters
 		var err error
 		lastParameters, err = getLastAppliedParameters(observed)
 		if err != nil {
@@ -425,13 +478,13 @@ func (c *external) Observe(ctx context.Context, cr *v1alpha1.AnsibleRun) (manage
 	return managed.ExternalObservation{}, nil
 }
 
-func (c *external) Create(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.ExternalCreation, error) {
+func (c *external[T]) Create(ctx context.Context, cr T) (managed.ExternalCreation, error) {
 	// No difference from the provider side which lifecycle method to choose in this case of Create() or Update()
 	u, err := c.Update(ctx, cr)
 	return managed.ExternalCreation(u), err
 }
 
-func (c *external) Update(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.ExternalUpdate, error) {
+func (c *external[T]) Update(ctx context.Context, cr T) (managed.ExternalUpdate, error) {
 	// disable checkMode for real action
 	c.runner.EnableCheckMode(false)
 	if err := c.runAnsible(ctx, cr); err != nil {
@@ -442,8 +495,8 @@ func (c *external) Update(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed
 	return managed.ExternalUpdate{ConnectionDetails: nil}, nil
 }
 
-func (c *external) Delete(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed.ExternalDelete, error) {
-	cr.Status.SetConditions(xpv1.Deleting())
+func (c *external[T]) Delete(ctx context.Context, cr T) (managed.ExternalDelete, error) {
+	cr.SetConditions(xpv2.Deleting())
 
 	stateVar := make(map[string]string)
 	stateVar["state"] = "absent"
@@ -459,12 +512,12 @@ func (c *external) Delete(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed
 	return managed.ExternalDelete{}, nil
 }
 
-func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleRunParameters, error) {
+func getLastAppliedParameters(observed metav1.Object) (*shared.AnsibleRunParameters, error) {
 	lastApplied, ok := observed.GetAnnotations()[v1.LastAppliedConfigAnnotation]
 	if !ok {
 		return nil, nil
 	}
-	lastParameters := &v1alpha1.AnsibleRunParameters{}
+	lastParameters := &shared.AnsibleRunParameters{}
 	if err := json.Unmarshal([]byte(lastApplied), lastParameters); err != nil {
 		return nil, fmt.Errorf("%s: %w", errUnmarshalTemplate, err)
 	}
@@ -472,14 +525,14 @@ func getLastAppliedParameters(observed *v1alpha1.AnsibleRun) (*v1alpha1.AnsibleR
 	return lastParameters, nil
 }
 
-func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alpha1.AnsibleRunParameters, desired *v1alpha1.AnsibleRun) (managed.ExternalObservation, error) {
+func (c *external[T]) handleLastApplied(ctx context.Context, lastParameters *shared.AnsibleRunParameters, desired T) (managed.ExternalObservation, error) {
 	// Mark as up-to-date if last is equal to desired
-	isUpToDate := (lastParameters != nil && equality.Semantic.DeepEqual(*lastParameters, desired.Spec.ForProvider))
+	isUpToDate := (lastParameters != nil && equality.Semantic.DeepEqual(*lastParameters, *desired.GetForProvider()))
 
-	isLastSyncOK := (desired.GetCondition(xpv1.TypeSynced).Status == v1.ConditionTrue)
+	isLastSyncOK := (desired.GetCondition(xpv2.TypeSynced).Status == v1.ConditionTrue)
 
 	if isUpToDate && isLastSyncOK {
-		desired.SetConditions(xpv1.Available())
+		desired.SetConditions(xpv2.Available())
 		if err := c.kube.Status().Update(ctx, desired); err != nil {
 			return managed.ExternalObservation{}, fmt.Errorf("updating status: %w", err)
 		}
@@ -487,7 +540,7 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 		return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 	}
 
-	out, err := json.Marshal(desired.Spec.ForProvider)
+	out, err := json.Marshal(*desired.GetForProvider())
 	if err != nil {
 		return managed.ExternalObservation{}, err
 	}
@@ -518,14 +571,14 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 	return managed.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 }
 
-func (c *external) runAnsible(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
+func (c *external[T]) runAnsible(ctx context.Context, cr T) error {
 	_, err := c.runner.Run(ctx)
 	if err != nil {
-		cond := xpv1.Unavailable()
+		cond := xpv2.Unavailable()
 		cond.Message = err.Error()
 		cr.SetConditions(cond)
 	} else {
-		cr.SetConditions(xpv1.Available())
+		cr.SetConditions(xpv2.Available())
 	}
 
 	if err := c.kube.Status().Update(ctx, cr); err != nil {
@@ -535,139 +588,10 @@ func (c *external) runAnsible(ctx context.Context, cr *v1alpha1.AnsibleRun) erro
 	return err
 }
 
-func addBehaviorVars(pc *v1alpha1.ProviderConfig) map[string]string {
-	behaviorVars := make(map[string]string, len(pc.Spec.Vars))
-	for _, v := range pc.Spec.Vars {
+func addBehaviorVars(pcSpec *shared.ProviderConfigSpec) map[string]string {
+	behaviorVars := make(map[string]string, len(pcSpec.Vars))
+	for _, v := range pcSpec.Vars {
 		behaviorVars[v.Key] = v.Value
 	}
 	return behaviorVars
-}
-
-func (c *connector) generateLeaseName(index uint32) string {
-	return fmt.Sprintf(leaseNameTemplate, index)
-}
-
-func (c *connector) releaseLease(ctx context.Context, kube client.Client, index uint32) error {
-	leaseName := c.generateLeaseName(index)
-
-	lease := &coordinationv1.Lease{
-		ObjectMeta: metav1.ObjectMeta{Namespace: c.leaseNamespace, Name: leaseName},
-	}
-
-	return kube.Delete(ctx, lease)
-}
-
-// Attempts to acquire or renew a lease for the current replica ID
-// Returns an error when unable to obtain the lease
-func (c *connector) acquireLease(ctx context.Context, kube client.Client, index uint32) error {
-	lease := &coordinationv1.Lease{}
-	leaseName := c.generateLeaseName(index)
-	leaseDurationSeconds := ptr.To(int32(leaseDurationSeconds))
-
-	if err := kube.Get(ctx, client.ObjectKey{Namespace: c.leaseNamespace, Name: leaseName}, lease); err != nil {
-		if !kerrors.IsNotFound(err) {
-			return err
-		}
-
-		// Create a new Lease
-		lease = &coordinationv1.Lease{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      leaseName,
-				Namespace: c.leaseNamespace,
-			},
-			Spec: coordinationv1.LeaseSpec{
-				HolderIdentity:       &c.replicaID,
-				RenewTime:            &metav1.MicroTime{Time: time.Now()},
-				LeaseDurationSeconds: leaseDurationSeconds,
-			},
-		}
-		if err := kube.Create(ctx, lease); err != nil {
-			return err
-		}
-		c.logger.Debug("created lease", "lease", lease)
-		return nil
-	}
-
-	// Check if the lease is held by another replica and is not expired
-	if lease.Spec.HolderIdentity != nil && *lease.Spec.HolderIdentity != c.replicaID {
-		if lease.Spec.RenewTime != nil && time.Since(lease.Spec.RenewTime.Time) < time.Duration(*lease.Spec.LeaseDurationSeconds)*time.Second {
-			// Lease is held by another replica and is not expired
-			return fmt.Errorf("lease is still held by %s", *lease.Spec.HolderIdentity)
-		}
-	}
-
-	// Update the lease to acquire it
-	lease.Spec.HolderIdentity = ptr.To(c.replicaID)
-	lease.Spec.RenewTime = &metav1.MicroTime{Time: time.Now()}
-	lease.Spec.LeaseDurationSeconds = leaseDurationSeconds
-	if err := kube.Update(ctx, lease); err != nil {
-		if kerrors.IsConflict(err) {
-			// Another replica updated the lease concurrently, retry
-			return err
-		}
-		return fmt.Errorf("failed to update lease: %w", err)
-	}
-
-	c.logger.Debug("updated lease", "lease", lease)
-	return nil
-}
-
-// Finds an available shard and acquires a lease for it. Will attempt to obtain one indefinitely.
-// This will also start a background go-routine to renew the lease continuously and release it when the process receives a shutdown signal.
-// When ReplicasCount is 1, lease acquisition is skipped and shard 0 is returned immediately.
-func (c *connector) acquireAndHoldShard(o controller.Options, s SetupOptions) (uint32, error) {
-	if s.ReplicasCount == 1 {
-		return 0, nil
-	}
-
-	ctx := s.ProviderCtx
-
-	cfg := ctrl.GetConfigOrDie()
-	kube, err := client.New(cfg, client.Options{})
-	if err != nil {
-		return 0, err
-	}
-
-	for {
-		if shard, ok := c.tryAcquireShard(ctx, kube, o, s); ok {
-			return shard, nil
-		}
-	}
-}
-
-func (c *connector) tryAcquireShard(ctx context.Context, kube client.Client, o controller.Options, s SetupOptions) (uint32, bool) {
-	for i := uint32(0); i < s.ReplicasCount; i++ {
-		if err := c.acquireLease(ctx, kube, i); err != nil {
-			o.Logger.Debug("cannot acquire lease", "id", i, "err", err)
-			time.Sleep(leaseAcquireAttemptInterval)
-			continue
-		}
-		o.Logger.Debug("acquired lease", "id", i)
-		go c.holdShard(ctx, kube, i, o, s)
-		return i, true
-	}
-	return 0, false
-}
-
-func (c *connector) holdShard(ctx context.Context, kube client.Client, i uint32, o controller.Options, s SetupOptions) {
-	sigHandler := ctrl.SetupSignalHandler()
-	for {
-		select {
-		case <-time.After(leaseRenewalInterval):
-			if err := c.acquireLease(ctx, kube, i); err != nil {
-				o.Logger.Info("failed to renew lease", "id", i, "err", err)
-				s.ProviderCancel()
-			} else {
-				o.Logger.Debug("renewed lease", "id", i)
-			}
-		case <-sigHandler.Done():
-			o.Logger.Info("controller is shutting down, releasing lease")
-			if err := c.releaseLease(ctx, kube, i); err != nil {
-				o.Logger.Info("failed to release lease", "lease", err)
-			}
-			o.Logger.Debug("released lease")
-			s.ProviderCancel()
-			return
-		}
-	}
 }

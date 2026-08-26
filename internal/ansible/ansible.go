@@ -32,13 +32,13 @@ import (
 	"time"
 
 	"github.com/apenella/go-ansible/pkg/stdoutcallback/results"
-	"github.com/crossplane/crossplane-runtime/pkg/meta"
-	"github.com/crossplane/crossplane-runtime/pkg/resource"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/meta"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
 	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 )
@@ -266,7 +266,7 @@ func (p Parameters) GalaxyInstall(ctx context.Context, behaviorVars map[string]s
 
 // Init initializes a new runner from parameters
 // nolint: gocyclo
-func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*Runner, error) {
+func (p Parameters) Init(ctx context.Context, params *shared.AnsibleRunParameters, o metav1.Object, behaviorVars map[string]string) (*Runner, error) {
 	var cmdFunc cmdFuncType
 	/*
 		    path can be either the working Directory or an other folder:
@@ -277,22 +277,22 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 	var path, ansibleEnvDir string
 
 	switch {
-	case cr.Spec.ForProvider.PlaybookInline == nil && len(cr.Spec.ForProvider.Roles) == 0:
+	case params.PlaybookInline == nil && len(params.Roles) == 0:
 		return nil, errors.New("at least a Playbook or Role should be provided")
-	case cr.Spec.ForProvider.PlaybookInline != nil && len(cr.Spec.ForProvider.Roles) != 0:
+	case params.PlaybookInline != nil && len(params.Roles) != 0:
 		return nil, errors.New("cannot execute Playbook(s) and Role(s) at the same time, please respect Mutual Exclusion")
-	case cr.Spec.ForProvider.PlaybookInline != nil:
+	case params.PlaybookInline != nil:
 		// For inline mode playbook is stored in the predefined playbookYml file
 		path = p.WorkingDirPath
 		cmdFunc = p.playbookCmdFunc(ctx, runnerutil.PlaybookYml, path)
-	case len(cr.Spec.ForProvider.Roles) != 0:
+	case len(params.Roles) != 0:
 		var err error
 		path, err = selectRolePath(p, behaviorVars)
 		if err != nil {
 			return nil, err
 		}
 		// TODO support multiple roles execution
-		cmdFunc = p.roleCmdFunc(ctx, cr.Spec.ForProvider.Roles[0].Name, path)
+		cmdFunc = p.roleCmdFunc(ctx, params.Roles[0].Name, path)
 	}
 
 	// init ansible env dir
@@ -303,7 +303,7 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 	if err := os.MkdirAll(ansibleEnvDir, 0700); resource.Ignore(os.IsExist, err) != nil {
 		return nil, fmt.Errorf("%s: %s: %w", ansibleEnvDir, errMkdir, err)
 	}
-	contentVarsBytes, err := cr.Spec.ForProvider.Vars.MarshalJSON()
+	contentVarsBytes, err := params.Vars.MarshalJSON()
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", errMarshalContentVars, err)
 	}
@@ -314,7 +314,7 @@ func (p Parameters) Init(ctx context.Context, cr *v1alpha1.AnsibleRun, behaviorV
 		return nil, err
 	}
 
-	rPolicy, err := newRunPolicy(GetPolicyRun(cr))
+	rPolicy, err := newRunPolicy(GetPolicyRun(o))
 	if err != nil {
 		return nil, err
 	}

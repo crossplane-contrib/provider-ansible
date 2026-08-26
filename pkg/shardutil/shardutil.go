@@ -42,3 +42,31 @@ func hashString(s string) uint32 {
 	h.Write([]byte(s))
 	return h.Sum32()
 }
+
+// IsNamespacedResourceForShard filters namespaced resources onto a shard. It
+// hashes namespace/name rather than the bare name, so that identically named
+// resources in different namespaces spread across replicas.
+//
+// Cluster-scoped resources keep using IsResourceForShard: switching them to
+// this key would rehash every existing object and reshuffle a live
+// multi-replica deployment on upgrade.
+func IsNamespacedResourceForShard(targetShard, totalShards uint32) predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return isNamespacedResourceForShardHelper(e.Object, targetShard, totalShards)
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return isNamespacedResourceForShardHelper(e.ObjectNew, targetShard, totalShards)
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return isNamespacedResourceForShardHelper(e.Object, targetShard, totalShards)
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return isNamespacedResourceForShardHelper(e.Object, targetShard, totalShards)
+		},
+	}
+}
+
+func isNamespacedResourceForShardHelper(obj client.Object, targetShard, totalShards uint32) bool {
+	return hashString(obj.GetNamespace()+"/"+obj.GetName())%totalShards == targetShard
+}

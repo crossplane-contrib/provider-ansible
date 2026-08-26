@@ -26,7 +26,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane-contrib/provider-ansible/apis/cluster/v1alpha1"
-	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 )
 
 func TestResolveSecretSelectors(t *testing.T) {
@@ -91,8 +90,8 @@ func TestResolveSecretSelectors(t *testing.T) {
 func TestNewConnectorRejectsIncompleteScope(t *testing.T) {
 	complete := Scope[*v1alpha1.AnsibleRun]{
 		Track: func(_ context.Context, _ *v1alpha1.AnsibleRun) error { return nil },
-		ResolveProviderConfig: func(_ context.Context, _ client.Client, _ *v1alpha1.AnsibleRun) (*shared.ProviderConfigSpec, error) {
-			return nil, nil
+		ResolveProviderConfig: func(_ context.Context, _ client.Client, _ *v1alpha1.AnsibleRun) (ResolvedProviderConfig, error) {
+			return ResolvedProviderConfig{}, nil
 		},
 		SecretNamespace: func(_ *v1alpha1.AnsibleRun) (string, bool) { return "", true },
 		BeforeObserve:   func(_ *v1alpha1.AnsibleRun) {},

@@ -47,6 +47,17 @@ func run(ns, name, pcKind, pcName string) *v1alpha1.AnsibleRun {
 	}
 }
 
+// TestResolveProviderConfig pins both halves of what resolveProviderConfig
+// returns: where each provider config kind is read from, and - critically -
+// the secret-namespace policy that travels with it.
+//
+// AllowExplicitSecretNamespace is the security seam. It must stay false for a
+// namespaced ProviderConfig, whose credentials are confined to the
+// AnsibleRun's namespace, and true for a cluster-scoped
+// ClusterProviderConfig, whose credentials an administrator writes once to
+// serve every namespace. Flipping either value silently changes what Secrets
+// the provider will read, which is why each case asserts it explicitly rather
+// than relying on the zero value.
 func TestResolveProviderConfig(t *testing.T) {
 	reqs := "collections:\n  - name: community.general\n"
 	spec := shared.ProviderConfigSpec{Requirements: &reqs}
@@ -54,7 +65,7 @@ func TestResolveProviderConfig(t *testing.T) {
 	cases := map[string]struct {
 		cr      *v1alpha1.AnsibleRun
 		get     func(t *testing.T) test.MockGetFn
-		want    *shared.ProviderConfigSpec
+		want    ansiblerun.ResolvedProviderConfig
 		wantErr bool
 	}{
 		"NamespacedConfigIsReadFromTheResourceNamespace": {
@@ -72,7 +83,9 @@ func TestResolveProviderConfig(t *testing.T) {
 					return nil
 				}
 			},
-			want: &spec,
+			// A namespaced ProviderConfig lives in the AnsibleRun's own
+			// namespace, so its credentials stay confined to it.
+			want: ansiblerun.ResolvedProviderConfig{Spec: &spec, AllowExplicitSecretNamespace: false},
 		},
 		"ClusterConfigIsReadWithoutANamespace": {
 			cr: run("team-a", "r", v1alpha1.ClusterProviderConfigKind, "cpc"),
@@ -89,7 +102,10 @@ func TestResolveProviderConfig(t *testing.T) {
 					return nil
 				}
 			},
-			want: &spec,
+			// A ClusterProviderConfig is cluster-scoped and written by an
+			// administrator, so its own credentials may name any namespace
+			// and one config serves AnsibleRuns everywhere.
+			want: ansiblerun.ResolvedProviderConfig{Spec: &spec, AllowExplicitSecretNamespace: true},
 		},
 		"UnknownKindIsRejected": {
 			cr: run("team-a", "r", "Nonsense", "pc"),
@@ -130,10 +146,23 @@ func TestResolveProviderConfig(t *testing.T) {
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("resolveProviderConfig(...): -want, +got:\n%s", diff)
 			}
+			// Asserted separately from the diff above so a regression names
+			// the policy that changed rather than only showing a struct diff.
+			if got.AllowExplicitSecretNamespace != tc.want.AllowExplicitSecretNamespace {
+				t.Errorf("resolveProviderConfig(...).AllowExplicitSecretNamespace: want %t, got %t; this decides whether this provider config's own credentials may name a namespace other than the AnsibleRun's",
+					tc.want.AllowExplicitSecretNamespace, got.AllowExplicitSecretNamespace)
+			}
 		})
 	}
 }
 
+// TestSecretNamespaceConfinesToOwnNamespace covers what a namespaced
+// AnsibleRun declares for itself - spec.forProvider.inventories. It is
+// deliberately unaffected by the ClusterProviderConfig relaxation: the
+// AnsibleRun below references a ClusterProviderConfig and is still confined.
+// A provider config's own credentials are governed by
+// ResolvedProviderConfig.AllowExplicitSecretNamespace instead, asserted in
+// TestResolveProviderConfig.
 func TestSecretNamespaceConfinesToOwnNamespace(t *testing.T) {
 	ns, allowExplicit := secretNamespace(run("team-a", "r", v1alpha1.ClusterProviderConfigKind, "cpc"))
 
@@ -141,18 +170,19 @@ func TestSecretNamespaceConfinesToOwnNamespace(t *testing.T) {
 		t.Errorf("secretNamespace(...): want team-a, got %q", ns)
 	}
 	if allowExplicit {
-		t.Error("secretNamespace(...): a namespaced resource must never be allowed a foreign secretRef namespace")
+		t.Error("secretNamespace(...): a namespaced resource's own selectors must never be allowed a foreign secretRef namespace")
 	}
 }
 
 // TestSecretNamespacePolicyComposesWithResolveSecretSelectors feeds
 // secretNamespace's two return values straight into the core's
-// ResolveSecretSelectors, exactly as the shared reconcile loop does at
-// internal/controller/ansibleRun/core.go. Testing each half in isolation
-// (secretNamespace above, ResolveSecretSelectors in the core's own
-// TestResolveSecretSelectors) does not pin the composition: this test is
-// what actually stops a namespaced AnsibleRun from ever reading a Secret
-// outside its own namespace.
+// ResolveSecretSelectors, exactly as the shared reconcile loop does for
+// spec.forProvider.inventories at internal/controller/ansibleRun/core.go.
+// Testing each half in isolation (secretNamespace above,
+// ResolveSecretSelectors in the core's own TestResolveSecretSelectors) does
+// not pin the composition: this test is what actually stops a namespaced
+// AnsibleRun's own selectors from ever reading a Secret outside its
+// namespace, whichever kind of provider config it references.
 func TestSecretNamespacePolicyComposesWithResolveSecretSelectors(t *testing.T) {
 	cr := run("team-a", "r", v1alpha1.ClusterProviderConfigKind, "cpc")
 	ns, allowExplicit := secretNamespace(cr)
@@ -195,11 +225,14 @@ func TestSecretNamespacePolicyComposesWithResolveSecretSelectors(t *testing.T) {
 	}
 }
 
-// The namespaced ansible.m.crossplane.io group must confine itself to its own
-// namespace, so all four fields of the Scope that Setup actually wires up are
-// asserted here. SecretNamespace gets a value assertion because its loss
-// would silently grant the namespaced group cross-namespace Secret reads,
-// which is the exact privilege escalation this API group exists to prevent.
+// The namespaced ansible.m.crossplane.io group must confine what an AnsibleRun
+// declares for itself to its own namespace, so all four fields of the Scope
+// that Setup actually wires up are asserted here. SecretNamespace gets a value
+// assertion because its loss would silently grant a namespaced AnsibleRun's
+// own selectors cross-namespace Secret reads. The one deliberate exception -
+// a cluster-scoped ClusterProviderConfig's own credentials - is carried by
+// ResolveProviderConfig, not by SecretNamespace, and is asserted in
+// TestResolveProviderConfig.
 
 func TestNewScopeIsComplete(t *testing.T) {
 	scope := NewScope(nil)
@@ -231,7 +264,7 @@ func TestNewScopeSecretNamespaceConfinesToOwnNamespace(t *testing.T) {
 		t.Errorf("NewScope(...).SecretNamespace(cr): namespace: want %q, got %q", "team-a", ns)
 	}
 	if allowExplicit {
-		t.Error("NewScope(...).SecretNamespace(cr): allowExplicit: want false, got true; a namespaced resource must never be allowed a foreign secretRef namespace")
+		t.Error("NewScope(...).SecretNamespace(cr): allowExplicit: want false, got true; a namespaced resource's own selectors must never be allowed a foreign secretRef namespace")
 	}
 }
 

@@ -7,10 +7,11 @@
 # ProviderConfig is resolved. See "Secrets are namespace-local" in the
 # README.
 #
-# The Secret below is identical to the one in clusterproviderconfig.yaml. It
-# is repeated here, rather than referenced, so that this file can be applied
-# on its own as a standalone example; the two are not meant to be applied
-# together.
+# The Secret below holds the same material as the one in
+# clusterproviderconfig.yaml, but in this namespace rather than
+# crossplane-system, so that this file can be applied on its own as a
+# standalone example. The two files may also be applied together: their
+# Secrets live in different namespaces and do not collide.
 apiVersion: v1
 kind: Secret
 metadata:

@@ -35,7 +35,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane-contrib/provider-ansible/apis/cluster/v1alpha1"
-	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
 	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
@@ -52,12 +51,15 @@ func NewScope(tracker resource.LegacyTracker) ansiblerun.Scope[*v1alpha1.Ansible
 		Track: func(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
 			return tracker.Track(ctx, cr)
 		},
-		ResolveProviderConfig: func(ctx context.Context, kube client.Client, cr *v1alpha1.AnsibleRun) (*shared.ProviderConfigSpec, error) {
+		ResolveProviderConfig: func(ctx context.Context, kube client.Client, cr *v1alpha1.AnsibleRun) (ansiblerun.ResolvedProviderConfig, error) {
 			pc := &v1alpha1.ProviderConfig{}
 			if err := kube.Get(ctx, types.NamespacedName{Name: cr.GetProviderConfigReference().Name}, pc); err != nil {
-				return nil, err
+				return ansiblerun.ResolvedProviderConfig{}, err
 			}
-			return &pc.Spec, nil
+			// This group is cluster-scoped throughout, so its provider
+			// config's credentials may name any namespace, exactly as they
+			// always have.
+			return ansiblerun.ResolvedProviderConfig{Spec: &pc.Spec, AllowExplicitSecretNamespace: true}, nil
 		},
 		// Cluster-scoped resources may reference a Secret in any namespace,
 		// exactly as they always have.

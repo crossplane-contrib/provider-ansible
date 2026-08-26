@@ -17,7 +17,7 @@
     - [Trust model](#trust-model)
     - [Choosing a provider config](#choosing-a-provider-config)
     - [Secrets are namespace-local](#secrets-are-namespace-local)
-    - [ClusterProviderConfig and namespaced Secrets](#clusterproviderconfig-and-namespaced-secrets)
+    - [ClusterProviderConfig credentials are cluster-wide](#clusterproviderconfig-credentials-are-cluster-wide)
     - [Deletion runs the playbook](#deletion-runs-the-playbook)
     - [Upgrading](#upgrading)
   - [Licensing](#licensing)
@@ -156,40 +156,50 @@ to `ClusterProviderConfig`:
 
 ### Secrets are namespace-local
 
-A namespaced `AnsibleRun` and a namespaced `ProviderConfig` may only read
-Secrets in their own namespace. `secretRef.namespace` is a required field on
+A namespaced `AnsibleRun` may only read Secrets in its own namespace, and so
+may a namespaced `ProviderConfig`. `secretRef.namespace` is a required field on
 every credential and inventory selector - the API server rejects a manifest
 that leaves it out - and for these namespaced resources it must be set to the
 resource's own namespace; naming any other namespace is refused with a clear
-error rather than silently read. `ClusterProviderConfig` is cluster-scoped, so
-on its own its `secretRef.namespace` may name any namespace, but that value is
-still checked against the namespaced `AnsibleRun` that is using the credential
-- see "ClusterProviderConfig and namespaced Secrets" below.
+error rather than silently read.
 
-### ClusterProviderConfig and namespaced Secrets
+This covers everything the namespaced objects themselves declare:
 
-A `ClusterProviderConfig` is cluster-scoped, so its `secretRef.namespace` is
-always explicit. But when a *namespaced* `AnsibleRun` uses one, the namespaced
-Secret policy above still applies to those credentials: the AnsibleRun may
-only read Secrets in its own namespace, regardless of which namespace the
-`ClusterProviderConfig`'s `secretRef` names. A `ClusterProviderConfig` whose
-credential says `secretRef.namespace: crossplane-system` will therefore fail
-to resolve for every namespaced `AnsibleRun` outside `crossplane-system`.
+- an `AnsibleRun`'s `spec.forProvider.inventories`, and
+- a namespaced `ProviderConfig`'s `spec.credentials`.
 
-This is deliberate and fails closed, and it is consistent with - not an
-exception to - the trust model above: it is defence-in-depth against
-*accidental* cross-namespace references, not a barrier against a tenant who
-is already acting adversarially. As "Trust model" describes, such a tenant
-can already read Secrets anywhere in the cluster through the playbook itself,
-regardless of which `ProviderConfig` or `ClusterProviderConfig` it declares.
-What this rule does prevent is a `ClusterProviderConfig` quietly handing a
-Secret from one namespace to an `AnsibleRun` in a different namespace that
-nobody intended to grant that access to - the same "own namespace only"
-policy as "Secrets are namespace-local" above, applied consistently even
-though `ClusterProviderConfig` itself is cluster-scoped. The cost is that a
-single `ClusterProviderConfig` cannot transparently share one Secret across
-every namespace. To serve several namespaces, either copy the Secret into
-each of them, or give each namespace its own namespaced `ProviderConfig`.
+A cluster-scoped `ClusterProviderConfig`'s own `spec.credentials` are the one
+exception - see below.
+
+### ClusterProviderConfig credentials are cluster-wide
+
+A `ClusterProviderConfig` is cluster-scoped, so its `secretRef.namespace` may
+name any namespace, and the credential resolves for a namespaced `AnsibleRun`
+in *every* namespace. One `ClusterProviderConfig` whose credential says
+`secretRef.namespace: crossplane-system` therefore serves the whole cluster,
+which is what makes it usable as the default `providerConfigRef.kind`. You do
+not need to copy the Secret into each namespace.
+
+The relaxation is deliberately narrow. It applies only to the credentials the
+cluster-scoped config itself declares. It does not relax anything a tenant
+writes in their own namespace: a namespaced `AnsibleRun`'s
+`spec.forProvider.inventories` stay confined to the `AnsibleRun`'s namespace
+even when it references a `ClusterProviderConfig`, and a namespaced
+`ProviderConfig`'s credentials stay confined to its own namespace.
+
+The reasoning follows from "Trust model" above: namespace confinement is
+defence-in-depth against *accidental* cross-namespace references, not a
+security boundary. A tenant's `playbookInline` already executes in the provider
+pod with its cluster-wide ServiceAccount token and can read any Secret it likes
+regardless of which config it declares. Confining a cluster-scoped config's
+credentials therefore cost a great deal of usability - a cluster-scoped config
+that could only ever serve one namespace - for protection a determined tenant
+already bypasses. Writing a `ClusterProviderConfig` is an administrator action;
+referencing one does not widen what a tenant could already reach.
+
+If you would rather each namespace kept its own credential anyway, give each
+one a namespaced `ProviderConfig` and set `providerConfigRef.kind:
+ProviderConfig`; those credentials remain confined to their namespace.
 
 ### Deletion runs the playbook
 

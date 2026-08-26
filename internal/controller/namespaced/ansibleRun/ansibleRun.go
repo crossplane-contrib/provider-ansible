@@ -36,7 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/crossplane-contrib/provider-ansible/apis/namespaced/v1alpha1"
-	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
 	ansiblerun "github.com/crossplane-contrib/provider-ansible/internal/controller/ansibleRun"
 	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
@@ -49,41 +48,66 @@ const (
 	errUnknownPCRef = "unknown provider config kind"
 )
 
-// resolveProviderConfig returns the spec of the provider config an AnsibleRun
-// refers to. A namespaced ProviderConfig is read from the AnsibleRun's own
+// resolveProviderConfig returns the provider config an AnsibleRun refers to,
+// together with the secret-namespace policy that applies to that config's own
+// credentials. A namespaced ProviderConfig is read from the AnsibleRun's own
 // namespace; a ClusterProviderConfig is read cluster-scoped.
+//
+// AllowExplicitSecretNamespace differs between the two kinds:
+//
+//   - A namespaced ProviderConfig lives in the AnsibleRun's namespace and its
+//     credentials stay confined to it, exactly like the AnsibleRun's own
+//     selectors.
+//   - A ClusterProviderConfig is cluster-scoped and is the default
+//     providerConfigRef.kind. Writing one is an administrator action, so its
+//     credentials may name any namespace and one config serves AnsibleRuns in
+//     every namespace. Confining them would have meant a cluster-scoped config
+//     could only ever serve a single namespace.
+//
+// Relaxing this for ClusterProviderConfig does not widen what a tenant can
+// reach: as the README's "Trust model" section explains, namespace confinement
+// is defence-in-depth against accidental cross-namespace references, not a
+// security boundary - a tenant's playbookInline already executes in the
+// provider pod with its cluster-wide ServiceAccount token. Referencing a
+// ClusterProviderConfig therefore grants nothing that was not already
+// reachable, while the AnsibleRun's own selectors stay confined.
 //
 // The shared core (internal/controller/ansibleRun/core.go) wraps whatever
 // error this returns with "cannot get ProviderConfig: %w", so the messages
 // here deliberately do not add that prefix themselves — doing so would
 // duplicate it in the message an operator sees.
-func resolveProviderConfig(ctx context.Context, kube client.Client, cr *v1alpha1.AnsibleRun) (*shared.ProviderConfigSpec, error) {
+func resolveProviderConfig(ctx context.Context, kube client.Client, cr *v1alpha1.AnsibleRun) (ansiblerun.ResolvedProviderConfig, error) {
 	ref := cr.GetProviderConfigReference()
 	if ref == nil {
-		return nil, errors.New(errNoPCRef)
+		return ansiblerun.ResolvedProviderConfig{}, errors.New(errNoPCRef)
 	}
 
 	switch ref.Kind {
 	case v1alpha1.ProviderConfigKind:
 		pc := &v1alpha1.ProviderConfig{}
 		if err := kube.Get(ctx, client.ObjectKey{Namespace: cr.GetNamespace(), Name: ref.Name}, pc); err != nil {
-			return nil, err
+			return ansiblerun.ResolvedProviderConfig{}, err
 		}
-		return &pc.Spec, nil
+		return ansiblerun.ResolvedProviderConfig{Spec: &pc.Spec, AllowExplicitSecretNamespace: false}, nil
 	case v1alpha1.ClusterProviderConfigKind:
 		cpc := &v1alpha1.ClusterProviderConfig{}
 		if err := kube.Get(ctx, client.ObjectKey{Name: ref.Name}, cpc); err != nil {
-			return nil, err
+			return ansiblerun.ResolvedProviderConfig{}, err
 		}
-		return &cpc.Spec, nil
+		return ansiblerun.ResolvedProviderConfig{Spec: &cpc.Spec, AllowExplicitSecretNamespace: true}, nil
 	default:
-		return nil, fmt.Errorf("%s %q", errUnknownPCRef, ref.Kind)
+		return ansiblerun.ResolvedProviderConfig{}, fmt.Errorf("%s %q", errUnknownPCRef, ref.Kind)
 	}
 }
 
-// secretNamespace confines a namespaced AnsibleRun to Secrets in its own
-// namespace. The second return value reports whether an explicit, differing
-// secretRef.namespace is permitted; for a namespaced resource it never is.
+// secretNamespace confines a namespaced AnsibleRun's own selectors -
+// spec.forProvider.inventories - to Secrets in its own namespace. The second
+// return value reports whether an explicit, differing secretRef.namespace is
+// permitted; for what a namespaced resource declares itself it never is.
+//
+// This does not govern the credentials a provider config declares. Those
+// consult ResolvedProviderConfig.AllowExplicitSecretNamespace, which
+// resolveProviderConfig sets per config kind.
 func secretNamespace(cr *v1alpha1.AnsibleRun) (string, bool) {
 	return cr.GetNamespace(), false
 }
@@ -98,8 +122,13 @@ func NewScope(tracker resource.ModernTracker) ansiblerun.Scope[*v1alpha1.Ansible
 		Track: func(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
 			return tracker.Track(ctx, cr)
 		},
+		// Resolves the referenced ProviderConfig or ClusterProviderConfig,
+		// and reports whether that config's own credentials may name a
+		// foreign namespace: never for a namespaced ProviderConfig, always
+		// for a cluster-scoped ClusterProviderConfig.
 		ResolveProviderConfig: resolveProviderConfig,
-		// A namespaced resource may only read Secrets in its own namespace.
+		// A namespaced resource's own selectors may only read Secrets in its
+		// own namespace.
 		SecretNamespace: secretNamespace,
 		// No BeforeObserve hook: unlike the legacy type there is no
 		// deletionPolicy to force, so the runtime calls Delete and the

@@ -134,12 +134,12 @@ func clusterScope(usage resource.LegacyTracker) Scope[*v1alpha1.AnsibleRun] {
 		Track: func(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
 			return usage.Track(ctx, cr)
 		},
-		ResolveProviderConfig: func(ctx context.Context, kube client.Client, cr *v1alpha1.AnsibleRun) (*shared.ProviderConfigSpec, error) {
+		ResolveProviderConfig: func(ctx context.Context, kube client.Client, cr *v1alpha1.AnsibleRun) (ResolvedProviderConfig, error) {
 			pc := &v1alpha1.ProviderConfig{}
 			if err := kube.Get(ctx, types.NamespacedName{Name: cr.GetProviderConfigReference().Name}, pc); err != nil {
-				return nil, err
+				return ResolvedProviderConfig{}, err
 			}
-			return &pc.Spec, nil
+			return ResolvedProviderConfig{Spec: &pc.Spec, AllowExplicitSecretNamespace: true}, nil
 		},
 		SecretNamespace: func(_ *v1alpha1.AnsibleRun) (string, bool) { return "", true },
 		BeforeObserve:   func(cr *v1alpha1.AnsibleRun) { cr.SetDeletionPolicy(xpv2.DeletionOrphan) },

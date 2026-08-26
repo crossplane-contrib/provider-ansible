@@ -65,6 +65,7 @@ const (
 	errInit                = "cannot initialize Ansible client"
 	errForeignSecret       = "a namespaced resource may only reference Secrets in its own namespace"
 	errIncompleteScope     = "cannot build an AnsibleRun connector: these required Scope fields are nil"
+	errNilPCSpec           = "the resolved ProviderConfig has no spec"
 	gitCredentialsFilename = ".git-credentials"
 
 	errGetAnsibleRun     = "cannot get AnsibleRun"
@@ -94,16 +95,38 @@ type Scope[T Run] struct {
 	// ProviderConfig.
 	Track func(ctx context.Context, cr T) error
 
-	// ResolveProviderConfig returns the spec of the ProviderConfig the
-	// supplied managed resource refers to.
-	ResolveProviderConfig func(ctx context.Context, kube client.Client, cr T) (*shared.ProviderConfigSpec, error)
+	// ResolveProviderConfig returns the provider config the supplied managed
+	// resource refers to, together with the secret-namespace policy that
+	// applies to that config's own credentials.
+	ResolveProviderConfig func(ctx context.Context, kube client.Client, cr T) (ResolvedProviderConfig, error)
 
 	// SecretNamespace returns the namespace Secrets must be read from, and
-	// whether the resource may instead name a namespace of its own choosing.
+	// whether the managed resource's own selectors may instead name a
+	// namespace of its own choosing. It governs everything the managed
+	// resource itself declares - spec.forProvider.inventories. The provider
+	// config's own credentials additionally consult
+	// ResolvedProviderConfig.AllowExplicitSecretNamespace.
 	SecretNamespace func(cr T) (ns string, allowExplicit bool)
 
 	// BeforeObserve, when set, runs at the very start of every Observe.
 	BeforeObserve func(cr T)
+}
+
+// ResolvedProviderConfig is a provider config the core has resolved, together
+// with the secret-namespace policy that applies to its own credentials.
+//
+// The policy travels with the config rather than with the managed resource
+// because the two are not the same question. What a namespaced AnsibleRun
+// declares for itself is confined to its own namespace; what a cluster-scoped
+// ClusterProviderConfig declares is not. See the README's
+// "ClusterProviderConfig credentials are cluster-wide" section.
+type ResolvedProviderConfig struct {
+	// Spec is the resolved provider config's spec.
+	Spec *shared.ProviderConfigSpec
+
+	// AllowExplicitSecretNamespace reports whether this provider config's own
+	// credentials may name a namespace other than the managed resource's.
+	AllowExplicitSecretNamespace bool
 }
 
 type ansibleRunner interface {
@@ -131,10 +154,15 @@ type SetupOptions struct {
 	Shard uint32
 }
 
-// ResolveSecretSelectors applies a scope's secret-namespace policy to a
-// credential selector. A cluster-scoped resource may name any namespace. A
-// namespaced resource may only read Secrets in its own namespace: an empty
-// namespace is filled in, and a differing one is refused.
+// ResolveSecretSelectors applies a secret-namespace policy to a credential
+// selector. When allowExplicit is true the selector is returned untouched, so
+// it may name any namespace. When it is false the selector is confined to ns:
+// an empty namespace is filled in, and a differing one is refused.
+//
+// Callers take allowExplicit from Scope.SecretNamespace for selectors the
+// managed resource itself declares, and from
+// ResolvedProviderConfig.AllowExplicitSecretNamespace for the provider
+// config's own credentials.
 func ResolveSecretSelectors(sel xpv2.CommonCredentialSelectors, ns string, allowExplicit bool) (xpv2.CommonCredentialSelectors, error) {
 	if allowExplicit || sel.SecretRef == nil {
 		return sel, nil
@@ -205,12 +233,23 @@ func (c *Connector[T]) Connect(ctx context.Context, cr T) (managed.TypedExternal
 		return nil, fmt.Errorf("%s: %w", errTrackPCUsage, err)
 	}
 
-	pcSpec, err := c.scope.ResolveProviderConfig(ctx, c.kube, cr)
+	pc, err := c.scope.ResolveProviderConfig(ctx, c.kube, cr)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", errGetPC, err)
 	}
+	if pc.Spec == nil {
+		return nil, fmt.Errorf("%s: %s", errGetPC, errNilPCSpec)
+	}
+	pcSpec := pc.Spec
 
+	// ns and allowExplicit govern what the managed resource itself declares:
+	// the inventories loop below. The provider config's own credentials are
+	// read from the same namespace, but their permission to name a different
+	// one comes from the resolved config, because a cluster-scoped
+	// ClusterProviderConfig is written by an administrator and is meant to
+	// serve every namespace.
 	ns, allowExplicit := c.scope.SecretNamespace(cr)
+	credsAllowExplicit := pc.AllowExplicitSecretNamespace
 
 	var inventoryPerm os.FileMode = 0600
 	if cr.GetForProvider().ExecutableInventory {
@@ -259,7 +298,7 @@ func (c *Connector[T]) Connect(ctx context.Context, cr T) (managed.TypedExternal
 		if cd.Filename != gitCredentialsFilename {
 			continue
 		}
-		sel, err := ResolveSecretSelectors(cd.CommonCredentialSelectors, ns, allowExplicit)
+		sel, err := ResolveSecretSelectors(cd.CommonCredentialSelectors, ns, credsAllowExplicit)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
 		}
@@ -297,7 +336,7 @@ func (c *Connector[T]) Connect(ctx context.Context, cr T) (managed.TypedExternal
 
 	// Saved credentials needed for ansible playbooks execution
 	for _, cd := range pcSpec.Credentials {
-		sel, err := ResolveSecretSelectors(cd.CommonCredentialSelectors, ns, allowExplicit)
+		sel, err := ResolveSecretSelectors(cd.CommonCredentialSelectors, ns, credsAllowExplicit)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
 		}

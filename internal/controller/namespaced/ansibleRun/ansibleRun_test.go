@@ -1,0 +1,180 @@
+/*
+Copyright 2020 The Crossplane Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package ansiblerun
+
+import (
+	"context"
+	"testing"
+
+	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
+	"github.com/google/go-cmp/cmp"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	v1alpha1 "github.com/crossplane-contrib/provider-ansible/apis/namespaced/v1alpha1"
+	shared "github.com/crossplane-contrib/provider-ansible/apis/shared/v1alpha1"
+)
+
+func run(ns, name, pcKind, pcName string) *v1alpha1.AnsibleRun {
+	return &v1alpha1.AnsibleRun{
+		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name},
+		Spec: v1alpha1.AnsibleRunSpec{
+			ManagedResourceSpec: xpv2.ManagedResourceSpec{
+				ProviderConfigReference: &xpv2.ProviderConfigReference{Kind: pcKind, Name: pcName},
+			},
+		},
+	}
+}
+
+func TestResolveProviderConfig(t *testing.T) {
+	reqs := "collections:\n  - name: community.general\n"
+	spec := shared.ProviderConfigSpec{Requirements: &reqs}
+
+	cases := map[string]struct {
+		cr      *v1alpha1.AnsibleRun
+		get     func(t *testing.T) test.MockGetFn
+		want    *shared.ProviderConfigSpec
+		wantErr bool
+	}{
+		"NamespacedConfigIsReadFromTheResourceNamespace": {
+			cr: run("team-a", "r", v1alpha1.ProviderConfigKind, "pc"),
+			get: func(t *testing.T) test.MockGetFn {
+				return func(_ context.Context, key client.ObjectKey, o client.Object) error {
+					if key.Namespace != "team-a" || key.Name != "pc" {
+						t.Errorf("Get(...): want team-a/pc, got %q/%q", key.Namespace, key.Name)
+					}
+					pc, ok := o.(*v1alpha1.ProviderConfig)
+					if !ok {
+						t.Fatalf("Get(...): want *ProviderConfig, got %T", o)
+					}
+					pc.Spec = spec
+					return nil
+				}
+			},
+			want: &spec,
+		},
+		"ClusterConfigIsReadWithoutANamespace": {
+			cr: run("team-a", "r", v1alpha1.ClusterProviderConfigKind, "cpc"),
+			get: func(t *testing.T) test.MockGetFn {
+				return func(_ context.Context, key client.ObjectKey, o client.Object) error {
+					if key.Namespace != "" || key.Name != "cpc" {
+						t.Errorf("Get(...): want cluster-scoped cpc, got %q/%q", key.Namespace, key.Name)
+					}
+					cpc, ok := o.(*v1alpha1.ClusterProviderConfig)
+					if !ok {
+						t.Fatalf("Get(...): want *ClusterProviderConfig, got %T", o)
+					}
+					cpc.Spec = spec
+					return nil
+				}
+			},
+			want: &spec,
+		},
+		"UnknownKindIsRejected": {
+			cr: run("team-a", "r", "Nonsense", "pc"),
+			get: func(t *testing.T) test.MockGetFn {
+				return func(_ context.Context, _ client.ObjectKey, _ client.Object) error {
+					t.Error("Get(...): must not be called for an unknown provider config kind")
+					return nil
+				}
+			},
+			wantErr: true,
+		},
+		"MissingReferenceIsRejected": {
+			cr: &v1alpha1.AnsibleRun{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "r"}},
+			get: func(t *testing.T) test.MockGetFn {
+				return func(_ context.Context, _ client.ObjectKey, _ client.Object) error {
+					t.Error("Get(...): must not be called when providerConfigRef is unset")
+					return nil
+				}
+			},
+			wantErr: true,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			kube := &test.MockClient{MockGet: tc.get(t)}
+
+			got, err := resolveProviderConfig(context.Background(), kube, tc.cr)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("resolveProviderConfig(...): expected an error, got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveProviderConfig(...): unexpected error: %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("resolveProviderConfig(...): -want, +got:\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestSecretNamespaceConfinesToOwnNamespace(t *testing.T) {
+	ns, allowExplicit := secretNamespace(run("team-a", "r", v1alpha1.ClusterProviderConfigKind, "cpc"))
+
+	if ns != "team-a" {
+		t.Errorf("secretNamespace(...): want team-a, got %q", ns)
+	}
+	if allowExplicit {
+		t.Error("secretNamespace(...): a namespaced resource must never be allowed a foreign secretRef namespace")
+	}
+}
+
+// The namespaced ansible.m.crossplane.io group must confine itself to its own
+// namespace, so all four fields of the Scope that Setup actually wires up are
+// asserted here. SecretNamespace gets a value assertion because its loss
+// would silently grant the namespaced group cross-namespace Secret reads,
+// which is the exact privilege escalation this API group exists to prevent.
+
+func TestNewScopeIsComplete(t *testing.T) {
+	scope := NewScope(nil)
+
+	if scope.Track == nil {
+		t.Error("NewScope(...).Track: must not be nil")
+	}
+	if scope.ResolveProviderConfig == nil {
+		t.Error("NewScope(...).ResolveProviderConfig: must not be nil")
+	}
+	if scope.SecretNamespace == nil {
+		t.Error("NewScope(...).SecretNamespace: must not be nil")
+	}
+	if scope.BeforeObserve != nil {
+		t.Error("NewScope(...).BeforeObserve: want nil; the namespaced type has no deletionPolicy to force")
+	}
+}
+
+func TestNewScopeSecretNamespaceConfinesToOwnNamespace(t *testing.T) {
+	scope := NewScope(nil)
+
+	if scope.SecretNamespace == nil {
+		t.Fatal("NewScope(...).SecretNamespace: must not be nil")
+	}
+
+	ns, allowExplicit := scope.SecretNamespace(run("team-a", "r", v1alpha1.ClusterProviderConfigKind, "cpc"))
+
+	if ns != "team-a" {
+		t.Errorf("NewScope(...).SecretNamespace(cr): namespace: want %q, got %q", "team-a", ns)
+	}
+	if allowExplicit {
+		t.Error("NewScope(...).SecretNamespace(cr): allowExplicit: want false, got true; a namespaced resource must never be allowed a foreign secretRef namespace")
+	}
+}

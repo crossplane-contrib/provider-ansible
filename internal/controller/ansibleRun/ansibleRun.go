@@ -307,6 +307,7 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 
 	// Requirements is a list of collections/roles to be installed, it is stored in requirements file
 	requirementRolesStr := string(requirementRoles)
+	var installRequirements func(context.Context) error
 	if pc.Spec.Requirements != nil || requirementRolesStr != "" {
 		var installCollections, installRoles bool
 		var reqSlice []string
@@ -325,18 +326,10 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 		if err := c.fs.WriteFile(filepath.Join(dir, galaxyutil.RequirementsFile), []byte(req), 0600); err != nil {
 			return nil, fmt.Errorf("%s: %w", errWriteConfig, err)
 		}
-		// install ansible requirements using ansible-galaxy
-		if installCollections {
-			if err := ps.GalaxyInstall(ctx, behaviorVars, "collection"); err != nil {
-				return nil, err
-			}
-		}
-		if installRoles {
-			if err := ps.GalaxyInstall(ctx, behaviorVars, "role"); err != nil {
-				return nil, err
-			}
-		}
-
+		// Installing requirements with ansible-galaxy can be expensive (e.g.
+		// full git clones), and Connect runs on every reconcile. Defer it until
+		// ansible-runner is actually about to run.
+		installRequirements = galaxyInstaller(ps, behaviorVars, installCollections, installRoles)
 	}
 
 	r, err := ps.Init(ctx, cr, behaviorVars)
@@ -345,12 +338,49 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 
 	}
 
-	return &external{runner: r, kube: c.kube}, nil
+	return &external{runner: r, kube: c.kube, installRequirements: installRequirements}, nil
+}
+
+// galaxyInstaller returns a function installing the requirements file
+// previously written to the working directory of ps with ansible-galaxy.
+func galaxyInstaller(ps params, behaviorVars map[string]string, collections, roles bool) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if collections {
+			if err := ps.GalaxyInstall(ctx, behaviorVars, "collection"); err != nil {
+				return err
+			}
+		}
+		if roles {
+			if err := ps.GalaxyInstall(ctx, behaviorVars, "role"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 type external struct {
 	runner ansibleRunner
 	kube   client.Client
+
+	// installRequirements installs the ansible requirements (collections
+	// and roles) needed by the runner. It is nil when there is nothing to
+	// install. Use ensureRequirements rather than calling it directly.
+	installRequirements func(context.Context) error
+	requirementsDone    bool
+	requirementsErr     error
+}
+
+// ensureRequirements installs the ansible requirements before the runner is
+// run. The installation is attempted at most once per external client, i.e.
+// once per reconcile, and its result is remembered for later calls.
+func (c *external) ensureRequirements(ctx context.Context) error {
+	if c.installRequirements == nil || c.requirementsDone {
+		return c.requirementsErr
+	}
+	c.requirementsDone = true
+	c.requirementsErr = c.installRequirements(ctx)
+	return c.requirementsErr
 }
 
 func (e *external) Disconnect(ctx context.Context) error {
@@ -400,6 +430,9 @@ func (c *external) Observe(ctx context.Context, cr *v1alpha1.AnsibleRun) (manage
 			return managed.ExternalObservation{}, err
 		}
 		c.runner.EnableCheckMode(true)
+		if err := c.ensureRequirements(ctx); err != nil {
+			return managed.ExternalObservation{}, err
+		}
 		stdoutBuf, err := c.runner.Run(ctx)
 		if err != nil {
 			return managed.ExternalObservation{}, err
@@ -450,6 +483,9 @@ func (c *external) Delete(ctx context.Context, cr *v1alpha1.AnsibleRun) (managed
 	nestedMap := make(map[string]interface{})
 	nestedMap[cr.GetName()] = stateVar
 	if err := c.runner.WriteExtraVar(nestedMap); err != nil {
+		return managed.ExternalDelete{}, err
+	}
+	if err := c.ensureRequirements(ctx); err != nil {
 		return managed.ExternalDelete{}, err
 	}
 	_, err := c.runner.Run(ctx)
@@ -519,7 +555,12 @@ func (c *external) handleLastApplied(ctx context.Context, lastParameters *v1alph
 }
 
 func (c *external) runAnsible(ctx context.Context, cr *v1alpha1.AnsibleRun) error {
-	_, err := c.runner.Run(ctx)
+	// A failure to install requirements is reported like a failed run, so
+	// that it is visible in the Ready condition of the resource.
+	err := c.ensureRequirements(ctx)
+	if err == nil {
+		_, err = c.runner.Run(ctx)
+	}
 	if err != nil {
 		cond := xpv1.Unavailable()
 		cond.Message = err.Error()

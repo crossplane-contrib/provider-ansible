@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"errors"
@@ -43,6 +44,7 @@ import (
 
 	"github.com/crossplane-contrib/provider-ansible/apis/v1alpha1"
 	"github.com/crossplane-contrib/provider-ansible/internal/ansible"
+	"github.com/crossplane-contrib/provider-ansible/pkg/galaxyutil"
 	"github.com/crossplane-contrib/provider-ansible/pkg/runnerutil"
 )
 
@@ -427,8 +429,8 @@ func TestConnect(t *testing.T) {
 			},
 			want: fmt.Errorf("%s: %w", errInit, errBoom),
 		},
-		"AnsibleGalaxyError": {
-			reason: "We should return any error encountered while installing ansible requirements",
+		"AnsibleGalaxyNotInstalledOnConnect": {
+			reason: "We should not install ansible requirements while connecting, only before running ansible",
 			fields: fields{
 				kube: &test.MockClient{
 					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
@@ -446,7 +448,7 @@ func TestConnect(t *testing.T) {
 							return nil, nil
 						},
 						MockGalaxyInstall: func(_ context.Context, _ map[string]string, _ string) error {
-							return errBoom
+							return errors.New("GalaxyInstall should not be called by Connect")
 						},
 						MockAddFile: func(_ string, _ []byte) error {
 							return nil
@@ -461,10 +463,13 @@ func TestConnect(t *testing.T) {
 						ResourceSpec: xpv1.ResourceSpec{
 							ProviderConfigReference: &xpv1.Reference{},
 						},
+						ForProvider: v1alpha1.AnsibleRunParameters{
+							Roles: []v1alpha1.Role{myRole},
+						},
 					},
 				},
 			},
-			want: errBoom,
+			want: nil,
 		},
 		"Success": {
 			reason: "We should not return an error when we successfully 'connect' to Ansible",
@@ -1040,6 +1045,287 @@ func TestAcquireAndHoldShard(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("\n%s\nacquireAndHoldShard(...): -want, +got:\n%s\n", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestConnectDefersGalaxyInstall(t *testing.T) {
+	errBoom := errors.New("boom")
+	requirements := "fakeRequirements"
+
+	type want struct {
+		calls []string
+		err   error
+	}
+
+	cases := map[string]struct {
+		reason       string
+		galaxyErrors map[string]error
+		want         want
+	}{
+		"InstallsCollectionsThenRoles": {
+			reason: "The deferred install should install collections then roles from the requirements file",
+			want:   want{calls: []string{"collection", "role"}},
+		},
+		"ReturnsGalaxyError": {
+			reason: "The deferred install should return any error encountered while installing ansible requirements",
+			galaxyErrors: map[string]error{
+				"collection": errBoom,
+			},
+			want: want{calls: []string{"collection"}, err: errBoom},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var calls []string
+			fs := afero.Afero{Fs: afero.NewMemMapFs()}
+			c := connector{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
+						if pc, ok := obj.(*v1alpha1.ProviderConfig); ok {
+							pc.Spec.Requirements = &requirements
+						}
+						return nil
+					}),
+				},
+				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				fs:    fs,
+				ansible: func(_ string) params {
+					return MockPs{
+						MockInit: func(_ context.Context, _ *v1alpha1.AnsibleRun, _ map[string]string) (*ansible.Runner, error) {
+							return &ansible.Runner{}, nil
+						},
+						MockGalaxyInstall: func(_ context.Context, _ map[string]string, requirementsType string) error {
+							calls = append(calls, requirementsType)
+							return tc.galaxyErrors[requirementsType]
+						},
+					}
+				},
+			}
+			cr := &v1alpha1.AnsibleRun{
+				ObjectMeta: metav1.ObjectMeta{UID: uid},
+				Spec: v1alpha1.AnsibleRunSpec{
+					ResourceSpec: xpv1.ResourceSpec{
+						ProviderConfigReference: &xpv1.Reference{},
+					},
+				},
+			}
+
+			ext, err := c.Connect(context.Background(), cr)
+			if err != nil {
+				t.Fatalf("\n%s\nc.Connect(...): unexpected error: %v", tc.reason, err)
+			}
+			if len(calls) != 0 {
+				t.Errorf("\n%s\nc.Connect(...): GalaxyInstall should not be called, got calls: %v", tc.reason, calls)
+			}
+			got, err := fs.ReadFile(filepath.Join(baseWorkingDir, string(uid), galaxyutil.RequirementsFile))
+			if err != nil {
+				t.Fatalf("\n%s\nc.Connect(...): requirements file should be written: %v", tc.reason, err)
+			}
+			if diff := cmp.Diff(requirements, string(got)); diff != "" {
+				t.Errorf("\n%s\nc.Connect(...): requirements file: -want, +got:\n%s\n", tc.reason, diff)
+			}
+
+			err = ext.(*external).ensureRequirements(context.Background())
+			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
+				t.Errorf("\n%s\ne.ensureRequirements(...): -want error, +got error:\n%s\n", tc.reason, diff)
+			}
+			if diff := cmp.Diff(tc.want.calls, calls); diff != "" {
+				t.Errorf("\n%s\ne.ensureRequirements(...): GalaxyInstall calls: -want, +got:\n%s\n", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestRequirementsInstalledBeforeRun(t *testing.T) {
+	const (
+		callInstall = "install"
+		callRun     = "run"
+	)
+
+	errBoom := errors.New("boom")
+	unavailableCond := xpv1.Unavailable()
+	unavailableCond.Message = errBoom.Error()
+
+	testPlaybook := "fake playbook"
+	testRun := v1alpha1.AnsibleRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				v1.LastAppliedConfigAnnotation: fmt.Sprintf(`{"playbookInline":"%s"}`, testPlaybook),
+			},
+		},
+		Spec: v1alpha1.AnsibleRunSpec{
+			ForProvider: v1alpha1.AnsibleRunParameters{
+				PlaybookInline: &testPlaybook,
+			},
+		},
+	}
+	upToDate := testRun.DeepCopy()
+	upToDate.SetConditions(xpv1.ReconcileSuccess())
+	lastSyncFailed := testRun.DeepCopy()
+	lastSyncFailed.SetConditions(xpv1.ReconcileError(errors.New("fake error")))
+
+	type action func(ctx context.Context, e *external, cr *v1alpha1.AnsibleRun) error
+	var (
+		observe action = func(ctx context.Context, e *external, cr *v1alpha1.AnsibleRun) error {
+			_, err := e.Observe(ctx, cr)
+			return err
+		}
+		update action = func(ctx context.Context, e *external, cr *v1alpha1.AnsibleRun) error {
+			_, err := e.Update(ctx, cr)
+			return err
+		}
+		del action = func(ctx context.Context, e *external, cr *v1alpha1.AnsibleRun) error {
+			_, err := e.Delete(ctx, cr)
+			return err
+		}
+		updateThenDelete action = func(ctx context.Context, e *external, cr *v1alpha1.AnsibleRun) error {
+			if err := update(ctx, e, cr); err != nil {
+				return err
+			}
+			return del(ctx, e, cr)
+		}
+	)
+
+	type want struct {
+		calls     []string
+		err       error
+		condition *xpv1.Condition
+	}
+
+	cases := map[string]struct {
+		reason     string
+		policy     string
+		cr         *v1alpha1.AnsibleRun
+		installErr error
+		do         action
+		want       want
+	}{
+		"ObserveUpToDateDoesNotInstall": {
+			reason: "We should not install requirements when an ObserveAndDelete observation finds nothing to run",
+			policy: "ObserveAndDelete",
+			cr:     upToDate,
+			do:     observe,
+			want:   want{calls: nil},
+		},
+		"ObserveRunInstallsBeforeRun": {
+			reason: "We should install requirements before running ansible from an ObserveAndDelete observation",
+			policy: "ObserveAndDelete",
+			cr:     lastSyncFailed,
+			do:     observe,
+			want:   want{calls: []string{callInstall, callRun}},
+		},
+		"ObserveRunInstallError": {
+			reason:     "We should return requirements install errors from an ObserveAndDelete observation and report them in status",
+			policy:     "ObserveAndDelete",
+			cr:         lastSyncFailed,
+			do:         observe,
+			installErr: errBoom,
+			want: want{
+				calls:     []string{callInstall},
+				err:       fmt.Errorf("running ansible: %w", errBoom),
+				condition: &unavailableCond,
+			},
+		},
+		"CheckWhenObserveInstallsBeforeRun": {
+			reason: "We should install requirements before running ansible in check mode from a CheckWhenObserve observation",
+			policy: "CheckWhenObserve",
+			cr:     &v1alpha1.AnsibleRun{},
+			do:     observe,
+			want:   want{calls: []string{callInstall, callRun}},
+		},
+		"CheckWhenObserveInstallError": {
+			reason:     "We should return requirements install errors from a CheckWhenObserve observation",
+			policy:     "CheckWhenObserve",
+			cr:         &v1alpha1.AnsibleRun{},
+			do:         observe,
+			installErr: errBoom,
+			want:       want{calls: []string{callInstall}, err: errBoom},
+		},
+		"UpdateInstallsBeforeRun": {
+			reason: "We should install requirements before running ansible on Update",
+			policy: "ObserveAndDelete",
+			cr:     &v1alpha1.AnsibleRun{},
+			do:     update,
+			want:   want{calls: []string{callInstall, callRun}},
+		},
+		"UpdateInstallError": {
+			reason:     "We should return requirements install errors on Update and report them in status",
+			policy:     "ObserveAndDelete",
+			cr:         &v1alpha1.AnsibleRun{},
+			do:         update,
+			installErr: errBoom,
+			want: want{
+				calls:     []string{callInstall},
+				err:       fmt.Errorf("running ansible: %w", errBoom),
+				condition: &unavailableCond,
+			},
+		},
+		"DeleteInstallsBeforeRun": {
+			reason: "We should install requirements before running ansible on Delete",
+			policy: "ObserveAndDelete",
+			cr:     &v1alpha1.AnsibleRun{},
+			do:     del,
+			want:   want{calls: []string{callInstall, callRun}},
+		},
+		"DeleteInstallError": {
+			reason:     "We should return requirements install errors on Delete",
+			policy:     "ObserveAndDelete",
+			cr:         &v1alpha1.AnsibleRun{},
+			do:         del,
+			installErr: errBoom,
+			want:       want{calls: []string{callInstall}, err: errBoom},
+		},
+		"InstallsAtMostOnce": {
+			reason: "We should install requirements at most once per external client, even if ansible runs several times",
+			policy: "ObserveAndDelete",
+			cr:     &v1alpha1.AnsibleRun{},
+			do:     updateThenDelete,
+			want:   want{calls: []string{callInstall, callRun, callRun}},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var calls []string
+			e := &external{
+				kube: &test.MockClient{
+					MockGet:          test.NewMockGetFn(nil),
+					MockUpdate:       test.NewMockUpdateFn(nil),
+					MockStatusUpdate: test.NewMockSubResourceUpdateFn(nil),
+				},
+				runner: &MockRunner{
+					MockAnsibleRunPolicy: func() *ansible.RunPolicy {
+						return &ansible.RunPolicy{Name: tc.policy}
+					},
+					MockWriteExtraVar:   func(_ map[string]interface{}) error { return nil },
+					MockEnableCheckMode: func(_ bool) {},
+					MockRun: func(_ context.Context) (io.Reader, error) {
+						calls = append(calls, callRun)
+						return strings.NewReader("{}"), nil
+					},
+				},
+				installRequirements: func(_ context.Context) error {
+					calls = append(calls, callInstall)
+					return tc.installErr
+				},
+			}
+			cr := tc.cr.DeepCopy()
+
+			err := tc.do(context.Background(), e, cr)
+			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
+				t.Errorf("\n%s\n-want error, +got error:\n%s\n", tc.reason, diff)
+			}
+			if diff := cmp.Diff(tc.want.calls, calls); diff != "" {
+				t.Errorf("\n%s\ncalls: -want, +got:\n%s\n", tc.reason, diff)
+			}
+			if tc.want.condition != nil {
+				if diff := cmp.Diff(*tc.want.condition, cr.GetCondition(xpv1.TypeReady),
+					cmpopts.IgnoreFields(xpv1.Condition{}, "LastTransitionTime")); diff != "" {
+					t.Errorf("\n%s\nready condition: -want, +got:\n%s\n", tc.reason, diff)
+				}
 			}
 		})
 	}

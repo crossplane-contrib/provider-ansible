@@ -518,7 +518,7 @@ func TestConnect(t *testing.T) {
 	}
 }
 
-func TestConnectGitSSHKey(t *testing.T) {
+func TestConnectGitCredentials(t *testing.T) {
 	sshKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----"
 	knownHosts := "github.com ssh-ed25519 AAAAfake\n"
 	gitCredDir := filepath.Join("/tmp", baseWorkingDir, string(uid))
@@ -541,15 +541,31 @@ func TestConnectGitSSHKey(t *testing.T) {
 		reason          string
 		credentials     []v1alpha1.ProviderCredentials
 		vars            []v1alpha1.Var
+		existingFiles   []string
+		wantCredDir     string
 		wantSSHCommand  string
 		wantKeyContents string
+		wantRemoved     []string
 	}{
 		"NoSSHKey": {
-			reason: "GIT_SSH_COMMAND should not be set when no SSH key is supplied",
+			reason:      "GIT_SSH_COMMAND should not be set when no SSH key is supplied, but GIT_CRED_DIR should still point at this run",
+			wantCredDir: gitCredDir,
+		},
+		"GitCredentials": {
+			reason:      "GIT_CRED_DIR should point at this run's directory when .git-credentials is supplied",
+			credentials: []v1alpha1.ProviderCredentials{secretCred(gitCredentialsFilename, "key")},
+			wantCredDir: gitCredDir,
+		},
+		"StaleCredentialsRemoved": {
+			reason:        "Git credential files no longer in the ProviderConfig should be removed",
+			existingFiles: []string{gitCredentialsFilename, gitSSHKeyFilename, gitKnownHostsFilename},
+			wantCredDir:   gitCredDir,
+			wantRemoved:   []string{gitCredentialsFilename, gitSSHKeyFilename, gitKnownHostsFilename},
 		},
 		"SSHKeyTrustOnFirstUse": {
 			reason:          "An SSH key without known hosts should accept new host keys into a private known_hosts file",
 			credentials:     []v1alpha1.ProviderCredentials{secretCred(gitSSHKeyFilename, "key")},
+			wantCredDir:     gitCredDir,
 			wantSSHCommand:  fmt.Sprintf("ssh -i '%s' -o IdentitiesOnly=yes -o UserKnownHostsFile='%s' -o StrictHostKeyChecking=accept-new", keyPath, filepath.Join(gitCredDir, "known_hosts")),
 			wantKeyContents: sshKey + "\n",
 		},
@@ -559,6 +575,7 @@ func TestConnectGitSSHKey(t *testing.T) {
 				secretCred(gitSSHKeyFilename, "key"),
 				secretCred(gitKnownHostsFilename, "known_hosts"),
 			},
+			wantCredDir:     gitCredDir,
 			wantSSHCommand:  fmt.Sprintf("ssh -i '%s' -o IdentitiesOnly=yes -o UserKnownHostsFile='%s' -o StrictHostKeyChecking=yes", keyPath, filepath.Join(gitCredDir, gitKnownHostsFilename)),
 			wantKeyContents: sshKey + "\n",
 		},
@@ -566,6 +583,7 @@ func TestConnectGitSSHKey(t *testing.T) {
 			reason:          "A GIT_SSH_COMMAND set in the ProviderConfig vars should not be overridden",
 			credentials:     []v1alpha1.ProviderCredentials{secretCred(gitSSHKeyFilename, "key")},
 			vars:            []v1alpha1.Var{{Key: gitSSHCommandEnv, Value: "ssh -v"}},
+			wantCredDir:     gitCredDir,
 			wantSSHCommand:  "ssh -v",
 			wantKeyContents: sshKey + "\n",
 		},
@@ -587,6 +605,11 @@ func TestConnectGitSSHKey(t *testing.T) {
 			}
 			var gotVars map[string]string
 			fs := afero.Afero{Fs: afero.NewMemMapFs()}
+			for _, f := range tc.existingFiles {
+				if err := fs.WriteFile(filepath.Join(gitCredDir, f), []byte("old"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			c := connector{
 				kube:  kube,
 				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
@@ -608,6 +631,17 @@ func TestConnectGitSSHKey(t *testing.T) {
 			}
 			if _, err := c.Connect(context.Background(), cr); err != nil {
 				t.Fatalf("\n%s\nc.Connect(...): unexpected error: %v", tc.reason, err)
+			}
+			if diff := cmp.Diff(tc.wantCredDir, gotVars[gitCredDirEnv]); diff != "" {
+				t.Errorf("\n%s\nc.Connect(...): -want GIT_CRED_DIR, +got:\n%s", tc.reason, diff)
+			}
+			if v, ok := os.LookupEnv(gitCredDirEnv); ok {
+				t.Errorf("\n%s\nc.Connect(...): provider process environment should not be modified, got %s=%s", tc.reason, gitCredDirEnv, v)
+			}
+			for _, f := range tc.wantRemoved {
+				if ok, _ := fs.Exists(filepath.Join(gitCredDir, f)); ok {
+					t.Errorf("\n%s\nc.Connect(...): %s should have been removed", tc.reason, f)
+				}
 			}
 			if diff := cmp.Diff(tc.wantSSHCommand, gotVars[gitSSHCommandEnv]); diff != "" {
 				t.Errorf("\n%s\nc.Connect(...): -want GIT_SSH_COMMAND, +got:\n%s", tc.reason, diff)

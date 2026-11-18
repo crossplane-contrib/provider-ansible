@@ -66,7 +66,6 @@ const (
 	errWriteGitCreds       = "cannot write .git-credentials to /tmp dir"
 	errWriteConfig         = "cannot write ansible collection requirements in" + galaxyutil.RequirementsFile
 	errWriteCreds          = "cannot write Playbook credentials"
-	errRemoteConfiguration = "cannot get remote AnsibleRun configuration"
 	errWriteAnsibleRun     = "cannot write AnsibleRun configuration in" + runnerutil.PlaybookYml
 	errWriteInventory      = "cannot write AnsibleRun inventory in"
 	errChmodInventory      = "cannot change permissions of inventory file"
@@ -77,6 +76,9 @@ const (
 	gitSSHKeyFilename      = ".git-ssh-key"
 	gitKnownHostsFilename  = ".git-known-hosts"
 	gitSSHCommandEnv       = "GIT_SSH_COMMAND"
+	// gitCredDirEnv is read by the credential helper in /.gitconfig of the
+	// container image.
+	gitCredDirEnv = "GIT_CRED_DIR"
 
 	errGetAnsibleRun     = "cannot get AnsibleRun"
 	errGetLastApplied    = "cannot get last applied"
@@ -251,7 +253,7 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 	// prepare git credentials for ansible-galaxy to fetch remote roles
 	// NOTE(ytsarev): Retrieve .git-credentials from Spec to /tmp outside of AnsibleRun directory
 	gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
-	gitSSHCommand, err := c.prepareGitCredentials(ctx, pc, gitCredDir)
+	gitEnv, err := c.prepareGitCredentials(ctx, pc, gitCredDir)
 	if err != nil {
 		return nil, err
 	}
@@ -288,10 +290,12 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.AnsibleRun) (manag
 
 	// prepare behavior vars
 	behaviorVars := addBehaviorVars(pc)
-	// Use the SSH key from the ProviderConfig for git operations unless the
-	// user explicitly configured their own GIT_SSH_COMMAND.
-	if _, ok := behaviorVars[gitSSHCommandEnv]; !ok && gitSSHCommand != "" {
-		behaviorVars[gitSSHCommandEnv] = gitSSHCommand
+	// Point git at this AnsibleRun's credentials, unless the user explicitly
+	// configured these variables themselves.
+	for k, v := range gitEnv {
+		if _, ok := behaviorVars[k]; !ok {
+			behaviorVars[k] = v
+		}
 	}
 
 	// Requirements is a list of collections/roles to be installed, it is stored in requirements file
@@ -525,11 +529,13 @@ func (c *external) runAnsible(ctx context.Context, cr *v1alpha1.AnsibleRun) erro
 }
 
 // prepareGitCredentials writes the git related credentials of the
-// ProviderConfig to gitCredDir. It returns the GIT_SSH_COMMAND to use when an
-// SSH private key was supplied, or an empty string otherwise.
-func (c *connector) prepareGitCredentials(ctx context.Context, pc *v1alpha1.ProviderConfig, gitCredDir string) (string, error) {
+// ProviderConfig to gitCredDir, removing any left over from a previous
+// configuration. It returns the environment variables that make git use them.
+// They are passed to each command rather than set on the provider process, so
+// that concurrent AnsibleRuns never see each other's credentials.
+func (c *connector) prepareGitCredentials(ctx context.Context, pc *v1alpha1.ProviderConfig, gitCredDir string) (map[string]string, error) {
 	if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
-		return "", fmt.Errorf("%s: %w", errWriteGitCreds, err)
+		return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
 	}
 	written := map[string]string{}
 	for _, cd := range pc.Spec.Credentials {
@@ -538,28 +544,41 @@ func (c *connector) prepareGitCredentials(ctx context.Context, pc *v1alpha1.Prov
 		}
 		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
 		if err != nil {
-			return "", fmt.Errorf("%s: %w", errGetCreds, err)
+			return nil, fmt.Errorf("%s: %w", errGetCreds, err)
 		}
 		if cd.Filename == gitSSHKeyFilename {
 			data = ensureTrailingNewline(data)
 		}
 		p := filepath.Clean(filepath.Join(gitCredDir, filepath.Base(cd.Filename)))
 		if err := c.fs.WriteFile(p, data, 0600); err != nil {
-			return "", fmt.Errorf("%s: %w", errWriteGitCreds, err)
+			return nil, fmt.Errorf("%s: %w", errWriteGitCreds, err)
 		}
 		written[cd.Filename] = p
 	}
-	if _, ok := written[gitCredentialsFilename]; ok {
-		// NOTE(ytsarev): Make git pick up .git-credentials, see /.gitconfig in the container image
-		if err := os.Setenv("GIT_CRED_DIR", gitCredDir); err != nil {
-			return "", fmt.Errorf("%s: %w", errRemoteConfiguration, err)
+	if err := c.removeStaleGitCredentials(gitCredDir, written); err != nil {
+		return nil, err
+	}
+	// Always set GIT_CRED_DIR to this AnsibleRun's directory. Without
+	// .git-credentials in it, git finds no stored credentials.
+	env := map[string]string{gitCredDirEnv: gitCredDir}
+	if sshKeyPath, ok := written[gitSSHKeyFilename]; ok {
+		env[gitSSHCommandEnv] = gitSSHCommandFor(sshKeyPath, written[gitKnownHostsFilename], gitCredDir)
+	}
+	return env, nil
+}
+
+// removeStaleGitCredentials removes git credential files that are no longer
+// part of the ProviderConfig.
+func (c *connector) removeStaleGitCredentials(gitCredDir string, written map[string]string) error {
+	for _, f := range []string{gitCredentialsFilename, gitSSHKeyFilename, gitKnownHostsFilename} {
+		if _, ok := written[f]; ok {
+			continue
+		}
+		if err := c.fs.Remove(filepath.Join(gitCredDir, f)); resource.Ignore(os.IsNotExist, err) != nil {
+			return fmt.Errorf("%s: %w", errWriteGitCreds, err)
 		}
 	}
-	sshKeyPath, ok := written[gitSSHKeyFilename]
-	if !ok {
-		return "", nil
-	}
-	return gitSSHCommandFor(sshKeyPath, written[gitKnownHostsFilename], gitCredDir), nil
+	return nil
 }
 
 // ensureTrailingNewline appends a newline to data if missing. OpenSSH refuses

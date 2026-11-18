@@ -518,6 +518,120 @@ func TestConnect(t *testing.T) {
 	}
 }
 
+func TestConnectGitSSHKey(t *testing.T) {
+	sshKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----"
+	knownHosts := "github.com ssh-ed25519 AAAAfake\n"
+	gitCredDir := filepath.Join("/tmp", baseWorkingDir, string(uid))
+	keyPath := filepath.Join(gitCredDir, gitSSHKeyFilename)
+
+	secretCred := func(filename, key string) v1alpha1.ProviderCredentials {
+		return v1alpha1.ProviderCredentials{
+			Filename: filename,
+			Source:   xpv1.CredentialsSourceSecret,
+			CommonCredentialSelectors: xpv1.CommonCredentialSelectors{
+				SecretRef: &xpv1.SecretKeySelector{
+					SecretReference: xpv1.SecretReference{Namespace: "ns", Name: "git"},
+					Key:             key,
+				},
+			},
+		}
+	}
+
+	cases := map[string]struct {
+		reason          string
+		credentials     []v1alpha1.ProviderCredentials
+		vars            []v1alpha1.Var
+		wantSSHCommand  string
+		wantKeyContents string
+	}{
+		"NoSSHKey": {
+			reason: "GIT_SSH_COMMAND should not be set when no SSH key is supplied",
+		},
+		"SSHKeyTrustOnFirstUse": {
+			reason:          "An SSH key without known hosts should accept new host keys into a private known_hosts file",
+			credentials:     []v1alpha1.ProviderCredentials{secretCred(gitSSHKeyFilename, "key")},
+			wantSSHCommand:  fmt.Sprintf("ssh -i '%s' -o IdentitiesOnly=yes -o UserKnownHostsFile='%s' -o StrictHostKeyChecking=accept-new", keyPath, filepath.Join(gitCredDir, "known_hosts")),
+			wantKeyContents: sshKey + "\n",
+		},
+		"SSHKeyWithKnownHosts": {
+			reason: "An SSH key with known hosts should verify host keys strictly",
+			credentials: []v1alpha1.ProviderCredentials{
+				secretCred(gitSSHKeyFilename, "key"),
+				secretCred(gitKnownHostsFilename, "known_hosts"),
+			},
+			wantSSHCommand:  fmt.Sprintf("ssh -i '%s' -o IdentitiesOnly=yes -o UserKnownHostsFile='%s' -o StrictHostKeyChecking=yes", keyPath, filepath.Join(gitCredDir, gitKnownHostsFilename)),
+			wantKeyContents: sshKey + "\n",
+		},
+		"UserGitSSHCommandWins": {
+			reason:          "A GIT_SSH_COMMAND set in the ProviderConfig vars should not be overridden",
+			credentials:     []v1alpha1.ProviderCredentials{secretCred(gitSSHKeyFilename, "key")},
+			vars:            []v1alpha1.Var{{Key: gitSSHCommandEnv, Value: "ssh -v"}},
+			wantSSHCommand:  "ssh -v",
+			wantKeyContents: sshKey + "\n",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			kube := &test.MockClient{
+				MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
+					switch o := obj.(type) {
+					case *v1alpha1.ProviderConfig:
+						o.Spec.Credentials = tc.credentials
+						o.Spec.Vars = tc.vars
+					case *v1.Secret:
+						o.Data = map[string][]byte{"key": []byte(sshKey), "known_hosts": []byte(knownHosts)}
+					}
+					return nil
+				}),
+			}
+			var gotVars map[string]string
+			fs := afero.Afero{Fs: afero.NewMemMapFs()}
+			c := connector{
+				kube:  kube,
+				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				fs:    fs,
+				ansible: func(_ string) params {
+					return MockPs{
+						MockInit: func(_ context.Context, _ *v1alpha1.AnsibleRun, behaviorVars map[string]string) (*ansible.Runner, error) {
+							gotVars = behaviorVars
+							return nil, nil
+						},
+					}
+				},
+			}
+			cr := &v1alpha1.AnsibleRun{
+				ObjectMeta: metav1.ObjectMeta{UID: uid},
+				Spec: v1alpha1.AnsibleRunSpec{
+					ResourceSpec: xpv1.ResourceSpec{ProviderConfigReference: &xpv1.Reference{}},
+				},
+			}
+			if _, err := c.Connect(context.Background(), cr); err != nil {
+				t.Fatalf("\n%s\nc.Connect(...): unexpected error: %v", tc.reason, err)
+			}
+			if diff := cmp.Diff(tc.wantSSHCommand, gotVars[gitSSHCommandEnv]); diff != "" {
+				t.Errorf("\n%s\nc.Connect(...): -want GIT_SSH_COMMAND, +got:\n%s", tc.reason, diff)
+			}
+			if tc.wantKeyContents == "" {
+				return
+			}
+			got, err := fs.ReadFile(keyPath)
+			if err != nil {
+				t.Fatalf("reading SSH key: %v", err)
+			}
+			if diff := cmp.Diff(tc.wantKeyContents, string(got)); diff != "" {
+				t.Errorf("\n%s\nc.Connect(...): -want key contents, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	if got, want := shellQuote("/tmp/it's here"), `'/tmp/it'\''s here'`; got != want {
+		t.Errorf("shellQuote(...): want %s, got %s", want, got)
+	}
+}
+
 func TestObserve(t *testing.T) {
 	errBoom := errors.New("boom")
 

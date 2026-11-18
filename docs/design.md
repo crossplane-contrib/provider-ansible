@@ -194,6 +194,37 @@ spec:
 
 It requires to create a secret `git-credentials` including the credentials and is referenced in `ProviderConfig` as above.
 
+To use SSH instead, for example with a deploy key, supply the private key with the reserved filename `.git-ssh-key`. You can optionally supply the host keys of your git servers with the reserved filename `.git-known-hosts`:
+
+```yaml
+apiVersion: ansible.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: provider-config-example
+spec:
+  credentials:
+    - filename: .git-ssh-key
+      source: Secret
+      secretRef:
+        namespace: crossplane-system
+        name: git-ssh
+        key: ssh-privatekey
+    - filename: .git-known-hosts
+      source: Secret
+      secretRef:
+        namespace: crossplane-system
+        name: git-ssh
+        key: known_hosts
+  requirements: |
+    ---
+    collections:
+      - name: git@github.com:sample_namespace/sample_collection.git
+        version: 0.1.0
+        type: git
+```
+
+The provider sets `GIT_SSH_COMMAND` so that `ansible-galaxy` and playbook runs authenticate with this key. When `.git-known-hosts` is supplied, host keys are verified strictly against it. Otherwise a host key is trusted the first time it is seen, which does not protect against a man-in-the-middle on that first connection, so supplying known hosts is recommended. A `GIT_SSH_COMMAND` set in `spec.vars` takes precedence over the generated one.
+
 Besides Ansible collections, you can also define Ansible roles as requirements in `ProviderConfig` and you can define both roles and collections in the same `ProviderConfig` resource. For example:
 
 ```yaml
